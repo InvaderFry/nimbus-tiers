@@ -1,0 +1,11 @@
+# Prevent Aider from reading sensitive files even if they exist locally.
+# See docs/architecture.md, Appendix D (Data Classification & Egress Controls).
+
+.env
+.env.*
+secrets/
+**/credentials.*
+**/api_keys.*
+**/*.pem
+**/*.key
+**/id_rsa*

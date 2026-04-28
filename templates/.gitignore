@@ -1,0 +1,39 @@
+# Per-feature artifacts — generated each task by Phase 1, archived to plans/ on completion.
+PLAN.md
+TESTS.md
+
+# Aider working files
+.aider.tags.cache.v3/
+.aider.chat.history.md
+.aider.input.history
+
+# Local secrets — must never be committed.
+.env
+.env.*
+secrets/
+**/credentials.*
+**/api_keys.*
+
+# Common Python artifacts (delete this block if your project isn't Python).
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# Common JS artifacts (delete this block if your project isn't JS).
+node_modules/
+.next/
+.turbo/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

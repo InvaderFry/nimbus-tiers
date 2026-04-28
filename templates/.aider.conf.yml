@@ -1,0 +1,24 @@
+# Aider configuration — Path C (Full Hybrid)
+# Default executor: local Devstral 24B served by TabbyAPI on localhost:5000.
+# Mid-session swaps:
+#   /model groq/llama-3.3-70b-versatile     # Tier 2 fallback
+#   /model anthropic/claude-opus-4-7        # Tier 3 escalation
+#   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
+
+model: openai/devstral-small-24b
+openai-api-base: http://localhost:5000/v1
+openai-api-key: notneeded
+
+# Safe-mode defaults — auto-commit each step, run tests after each edit.
+# For high-risk repos (auth, billing, migrations) override with
+# `auto-commits: false` in a repo-local .aider.conf.yml so you can review
+# diffs before they hit git history.
+auto-commits: true
+auto-test: true
+test-cmd: pytest -x --no-header
+
+# Read-only files that should always be in context for any session.
+# Per-feature PLAN.md and TESTS.md are added on the command line, not here.
+read:
+  - CONTEXT.md
+  - VERIFY.md
