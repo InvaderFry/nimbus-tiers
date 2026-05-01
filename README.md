@@ -6,7 +6,7 @@ A template repository for the **Hybrid AI Coding Architecture** (Plan → Execut
 
 Two stdlib-only Python CLIs:
 
-- **`generateNewProject.py`** — creates a new project folder *one directory above this repo*, copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `README.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
+- **`generateNewProject.py`** — creates a new project folder *one directory above this repo*, copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `NIMBUS_GUIDE.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
 - **`setupEnvironment.py`** — checks the host machine for the runtime stack required by Path C (Full Hybrid: NVIDIA driver, Ollama, TabbyAPI/ExLlamaV3, Aider, Claude Code, env vars). Prompts before installing or modifying anything.
 
 ## Step-by-step: from zero to first coding session

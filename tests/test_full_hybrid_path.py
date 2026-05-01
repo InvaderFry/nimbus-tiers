@@ -25,7 +25,7 @@ def test_full_hybrid_template_files_includes_core_artifacts() -> None:
         Path("CONTEXT.md"),
         Path("VERIFY.md"),
         Path("CLAUDE.md"),
-        Path("README.md"),
+        Path("NIMBUS_GUIDE.md"),
         Path(".aider.conf.yml"),
         Path(".aiderignore"),
         Path(".gitignore"),
