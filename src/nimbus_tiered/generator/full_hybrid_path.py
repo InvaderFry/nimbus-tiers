@@ -22,7 +22,7 @@ class FullHybridPath(SetupPath):
             ("CONTEXT.md", "CONTEXT.md"),
             ("VERIFY.md", "VERIFY.md"),
             ("CLAUDE.md", "CLAUDE.md"),
-            ("README.md", "README.md"),
+            ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
             (".aider.conf.yml", ".aider.conf.yml"),
             (".aiderignore", ".aiderignore"),
             (".gitignore", ".gitignore"),
