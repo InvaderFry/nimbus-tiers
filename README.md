@@ -9,6 +9,93 @@ Two stdlib-only Python CLIs:
 - **`generateNewProject.py`** — creates a new project folder *one directory above this repo*, copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `README.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
 - **`setupEnvironment.py`** — checks the host machine for the runtime stack required by Path C (Full Hybrid: NVIDIA driver, Ollama, TabbyAPI/ExLlamaV3, Aider, Claude Code, env vars). Prompts before installing or modifying anything.
 
+## Step-by-step: from zero to first coding session
+
+Follow these steps in order. No installation is required beyond Python 3.11+.
+
+**Step 1 — Clone this repo**
+
+```bash
+git clone https://github.com/invaderfry/nimbus-tiered
+cd nimbus-tiered
+```
+
+**Step 2 — (Optional but recommended) Check your environment**
+
+This tells you whether the required tools (NVIDIA driver, Ollama, TabbyAPI, Aider, Claude Code) are already present. Nothing is installed — it only reports what's missing.
+
+```bash
+python3 setupEnvironment.py --check-only
+```
+
+If anything is missing, run the same command without `--check-only` and it will prompt you before installing each item:
+
+```bash
+python3 setupEnvironment.py
+```
+
+**Step 3 — Scaffold a new project**
+
+This creates `../my-app` (one directory above this repo), copies all template files into it, and runs `git init` + an initial commit.
+
+```bash
+python3 generateNewProject.py my-app
+```
+
+Replace `my-app` with your actual project name (letters, numbers, dashes, underscores).
+
+**Step 4 — cd into your new project**
+
+```bash
+cd ../my-app
+```
+
+**Step 5 — Phase 1: Plan (Claude Code)**
+
+Open Claude Code and use it to write `PLAN.md` and `TESTS.md`, and to refine the `CONTEXT.md` that was scaffolded for you.
+
+```bash
+claude
+```
+
+Inside the session, ask Claude to read `CONTEXT.md`, produce a `PLAN.md` with a clear task breakdown, and write `TESTS.md` with acceptance criteria.
+
+**Step 6 — Phase 2: Execute (Aider)**
+
+Hand the plan to Aider. It reads your plan and context as reference files and writes the actual code.
+
+```bash
+aider --read PLAN.md --read TESTS.md --read CONTEXT.md
+```
+
+**Step 7 — Phase 3: Review (Claude Code)**
+
+Return to Claude Code to review the diff Aider produced against the original plan.
+
+```bash
+claude
+```
+
+Ask Claude to compare the changes against `PLAN.md` and `TESTS.md` and identify anything missing or incorrect.
+
+---
+
+## `nimbus-generate` vs `python3 generateNewProject.py` — what's the difference?
+
+They run **identical code**. `generateNewProject.py` is a thin shim that imports and calls the same internal function (`nimbus_tiered.generator.cli:main`) that the `nimbus-generate` console-script alias also calls. The difference is only in how you invoke them:
+
+| | `python3 generateNewProject.py` | `nimbus-generate` |
+|---|---|---|
+| Install required? | No — works right after `git clone` | Yes — requires `pip install -e .` or `pipx install .` first |
+| Must run from repo dir? | Yes | No — it's a global command, callable from anywhere |
+| Arguments / flags | Identical | Identical |
+
+**Use `python3 generateNewProject.py`** when you just cloned the repo and want to get started immediately.
+
+**Use `nimbus-generate`** when you want a global command so you don't have to `cd` back into the nimbus-tiered repo each time you scaffold a new project. The same applies to `nimbus-setup` vs `python3 setupEnvironment.py`.
+
+---
+
 ## Quick start
 
 The two top-level scripts (`generateNewProject.py`, `setupEnvironment.py`) are self-contained — they add `src/` to `sys.path` themselves, so **no install is required to use them**:
