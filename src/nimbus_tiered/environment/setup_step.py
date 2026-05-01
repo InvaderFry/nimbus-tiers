@@ -51,6 +51,7 @@ class InstallResult:
 Runner = Callable[..., subprocess.CompletedProcess]
 Confirm = Callable[[str], bool]
 Logger = Callable[[str], None]
+Prompter = Callable[[str], "str | None"]
 
 
 def default_confirm(prompt: str) -> bool:
@@ -59,6 +60,14 @@ def default_confirm(prompt: str) -> bool:
     except EOFError:
         return False
     return answer in {"y", "yes"}
+
+
+def default_prompter(prompt: str) -> "str | None":
+    try:
+        value = input(f"{prompt}: ").strip()
+    except EOFError:
+        return None
+    return value or None
 
 
 def default_runner(*args, **kwargs) -> subprocess.CompletedProcess:
@@ -80,10 +89,12 @@ class SetupStep(ABC):
         runner: Runner | None = None,
         confirm: Confirm | None = None,
         logger: Logger | None = None,
+        prompter: Prompter | None = None,
     ) -> None:
         self._run = runner if runner is not None else default_runner
         self._confirm = confirm if confirm is not None else default_confirm
         self._log = logger if logger is not None else default_logger
+        self._prompter = prompter if prompter is not None else default_prompter
 
     @abstractmethod
     def check(self) -> CheckResult:
@@ -113,6 +124,9 @@ class SetupStep(ABC):
         except FileNotFoundError as exc:
             return 127, "", str(exc)
         return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+    def _prompt(self, label: str) -> str | None:
+        return self._prompter(label)
 
     def _ask(self, prompt: str, assume_yes: bool) -> bool:
         if assume_yes:
@@ -182,7 +196,9 @@ __all__ = [
     "InstallResult",
     "SetupStep",
     "EnvVarStep",
+    "Prompter",
     "default_confirm",
+    "default_prompter",
     "default_runner",
     "default_logger",
 ]
