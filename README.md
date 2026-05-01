@@ -11,22 +11,41 @@ Two stdlib-only Python CLIs:
 
 ## Quick start
 
+The two top-level scripts (`generateNewProject.py`, `setupEnvironment.py`) are self-contained — they add `src/` to `sys.path` themselves, so **no install is required to use them**:
+
 ```bash
-# 1. (one time) install this template repo locally as a Python package
-pip install -e .
+# 1. scaffold a new project (creates ../my-app and git-inits it)
+python3 generateNewProject.py my-app
 
-# 2. scaffold a new project (creates ../my-app and git-inits it)
-python generateNewProject.py my-app
+# 2. (optional) bring up the Path C runtime stack on this machine
+python3 setupEnvironment.py --check-only
 
-# 3. (optional) bring up the Path C runtime stack on this machine
-python setupEnvironment.py
-
-# 4. cd into the new project and start the Plan → Execute → Review flow
+# 3. cd into the new project and start the Plan → Execute → Review flow
 cd ../my-app
 claude          # Phase 1: write PLAN.md, TESTS.md, refine CONTEXT.md
 aider --read PLAN.md --read TESTS.md --read CONTEXT.md   # Phase 2
 claude /review  # Phase 3
 ```
+
+### Optional: install as a Python package
+
+If you want global `nimbus-generate` / `nimbus-setup` console-script aliases, install the package. **On modern Debian/Ubuntu/WSL (PEP 668)**, the system Python refuses `pip install` outside a venv — pick one of these:
+
+```bash
+# Option A — venv (recommended for development)
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[test]"
+
+# Option B — pipx (for global CLI access)
+sudo apt install pipx
+pipx install .
+
+# Option C — only if you understand the risks (NOT recommended)
+pip install -e . --break-system-packages
+```
+
+If you see `error: externally-managed-environment` from pip, that's PEP 668. Use a venv or pipx — don't use `--break-system-packages` on your system Python.
 
 ## Setup paths
 
@@ -48,6 +67,10 @@ Both CLIs check before overwriting anything:
 ## Development
 
 ```bash
+# create and activate a venv (required on PEP 668 systems like Ubuntu 23.04+/WSL)
+python3 -m venv .venv
+source .venv/bin/activate
+
 # install with test deps
 pip install -e ".[test]"
 
