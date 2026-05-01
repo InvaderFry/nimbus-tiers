@@ -1,42 +1,61 @@
-"""TabbyAPI checkout check + optional clone.
-
-We don't auto-run start.py — it triggers a long Flash Attention build that the
-user should kick off interactively. We only verify that the checkout exists.
-"""
+"""TabbyAPI presence check + optional remote-endpoint config or local clone."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Callable
 
 from nimbus_tiered.environment.setup_step import (
     CheckResult,
     CheckStatus,
     InstallResult,
     InstallStatus,
+    Prompter,
     SetupStep,
 )
 
 
 TABBY_REPO = "https://github.com/theroyallab/tabbyAPI"
 DEFAULT_TABBY_PATH = "~/tabbyapi"
+TABBYAPI_URL_VAR = "TABBYAPI_URL"
+
+
+def _append_bashrc_export(var: str, value: str) -> None:
+    path = os.path.expanduser("~/.bashrc")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f'export {var}="{value}"\n')
 
 
 class TabbyApiStep(SetupStep):
     name = "tabbyapi"
     description = "TabbyAPI inference backend (ExLlamaV3, port 5000)"
 
-    def __init__(self, tabby_path: str = DEFAULT_TABBY_PATH, **kwargs) -> None:
+    def __init__(
+        self,
+        tabby_path: str = DEFAULT_TABBY_PATH,
+        env_lookup: Callable[[str], str | None] | None = None,
+        rc_writer: Callable[[str, str], None] | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.tabby_path = tabby_path
+        self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
+        self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
 
     def _resolved_path(self) -> Path:
         return Path(os.path.expanduser(self.tabby_path))
 
     def check(self) -> CheckResult:
+        url = self._env_lookup(TABBYAPI_URL_VAR)
+        if url:
+            return CheckResult(CheckStatus.PRESENT, f"remote endpoint configured: {url}")
         path = self._resolved_path()
         if not path.is_dir():
-            return CheckResult(CheckStatus.MISSING, f"no checkout at {path}")
+            return CheckResult(
+                CheckStatus.MISSING,
+                f"no checkout at {path} and {TABBYAPI_URL_VAR} not set",
+            )
         if not (path / "start.py").is_file():
             return CheckResult(
                 CheckStatus.PARTIAL,
@@ -45,6 +64,39 @@ class TabbyApiStep(SetupStep):
         return CheckResult(CheckStatus.PRESENT, f"checkout at {path}")
 
     def install(self, assume_yes: bool = False) -> InstallResult:
+        if not assume_yes:
+            self._log(
+                "\nTabbyAPI is not available locally. How would you like to configure it?\n"
+                "  [r] Use a remote endpoint (e.g. TabbyAPI running on your Windows host)\n"
+                "  [i] Clone locally\n"
+                "  [s] Skip"
+            )
+            choice = (self._prompt("Choice [r/i/s]") or "s").strip().lower()
+            if choice == "r":
+                return self._configure_remote()
+            if choice == "s":
+                return InstallResult(InstallStatus.SKIPPED, "user skipped")
+        return self._clone_local(assume_yes)
+
+    def _configure_remote(self) -> InstallResult:
+        url = self._prompt("TabbyAPI endpoint URL (e.g. http://192.168.1.100:5000)")
+        if not url:
+            return InstallResult(InstallStatus.SKIPPED, "no URL entered")
+        if self._confirm(f"Append export {TABBYAPI_URL_VAR}={url!r} to ~/.bashrc?"):
+            try:
+                self._rc_writer(TABBYAPI_URL_VAR, url)
+            except OSError as exc:
+                return InstallResult(InstallStatus.FAILED, str(exc))
+            return InstallResult(
+                InstallStatus.INSTALLED,
+                f"{TABBYAPI_URL_VAR}={url} written to ~/.bashrc; restart your shell to apply",
+            )
+        return InstallResult(
+            InstallStatus.SKIPPED,
+            f"endpoint noted but not persisted ({url}); set {TABBYAPI_URL_VAR} manually to keep it",
+        )
+
+    def _clone_local(self, assume_yes: bool) -> InstallResult:
         path = self._resolved_path()
         if path.exists():
             return InstallResult(
@@ -68,4 +120,4 @@ class TabbyApiStep(SetupStep):
         )
 
 
-__all__ = ["TabbyApiStep", "TABBY_REPO", "DEFAULT_TABBY_PATH"]
+__all__ = ["TabbyApiStep", "TABBY_REPO", "DEFAULT_TABBY_PATH", "TABBYAPI_URL_VAR"]
