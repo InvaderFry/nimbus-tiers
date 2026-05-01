@@ -11,6 +11,7 @@ from nimbus_tiered.environment.setup_step import EnvVarStep, SetupStep
 from nimbus_tiered.environment.steps import (
     AiderStep,
     ClaudeCodeStep,
+    GroqApiKeyStep,
     NvidiaDriverStep,
     OllamaStep,
     PythonStep,
@@ -28,6 +29,7 @@ def _full_hybrid_steps() -> list[SetupStep]:
         EnvVarStep("OLLAMA_KV_CACHE_TYPE", "q8_0"),
         TabbyApiStep(),
         AiderStep(),
+        GroqApiKeyStep(),
         ClaudeCodeStep(),
     ]
 

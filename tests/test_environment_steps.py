@@ -27,6 +27,7 @@ from nimbus_tiered.environment.setup_step import (
 from nimbus_tiered.environment.steps import (
     AiderStep,
     ClaudeCodeStep,
+    GroqApiKeyStep,
     NvidiaDriverStep,
     OllamaStep,
     PythonStep,
@@ -262,6 +263,70 @@ def test_tabbyapi_install_assume_yes_clones_locally(tmp_path: Path) -> None:
     step._which = lambda _cmd: "/usr/bin/git"  # type: ignore[method-assign]
     result = step.install(assume_yes=True)
     assert result.status is InstallStatus.INSTALLED
+
+
+# ----- GroqApiKeyStep -------------------------------------------------------
+
+
+def test_groq_check_missing_when_key_not_set() -> None:
+    step = GroqApiKeyStep(env_lookup=lambda _k: None)
+    result = step.check()
+    assert result.status is CheckStatus.MISSING
+    assert "GROQ_API_KEY" in result.detail
+
+
+def test_groq_check_present_when_key_set() -> None:
+    step = GroqApiKeyStep(env_lookup=lambda _k: "gsk_abc123xyz")
+    result = step.check()
+    assert result.status is CheckStatus.PRESENT
+    assert "gsk_abc1" in result.detail
+    assert "gsk_abc123xyz" not in result.detail  # full key must not appear in logs
+
+
+def test_groq_check_present_short_key_masked() -> None:
+    step = GroqApiKeyStep(env_lookup=lambda _k: "short")
+    result = step.check()
+    assert result.status is CheckStatus.PRESENT
+    assert "short" not in result.detail
+
+
+def test_groq_install_skipped_when_no_key_entered() -> None:
+    step = GroqApiKeyStep(
+        prompter=lambda _p: None,
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.SKIPPED
+
+
+def test_groq_install_persists_key_to_bashrc() -> None:
+    captured: list[tuple[str, str]] = []
+    step = GroqApiKeyStep(
+        prompter=lambda _p: "gsk_testkey123",
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert captured == [("GROQ_API_KEY", "gsk_testkey123")]
+
+
+def test_groq_install_skipped_when_user_declines_bashrc() -> None:
+    step = GroqApiKeyStep(
+        prompter=lambda _p: "gsk_testkey123",
+        confirm=lambda _p: False,
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.SKIPPED
+    assert "not persisted" in result.detail
+
+
+def test_groq_install_assume_yes_returns_manual() -> None:
+    step = GroqApiKeyStep(logger=lambda _m: None)
+    result = step.install(assume_yes=True)
+    assert result.status is InstallStatus.MANUAL
 
 
 # ----- AiderStep ------------------------------------------------------------
