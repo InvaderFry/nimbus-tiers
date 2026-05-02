@@ -12,11 +12,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nimbus_tiered.environment.environment_setup import (
+from nimbus_tiers.environment.environment_setup import (
     EnvironmentSetup,
     EnvironmentReport,
 )
-from nimbus_tiered.environment.setup_step import (
+from nimbus_tiers.environment.setup_step import (
     CheckResult,
     CheckStatus,
     EnvVarStep,
@@ -24,7 +24,7 @@ from nimbus_tiered.environment.setup_step import (
     InstallStatus,
     SetupStep,
 )
-from nimbus_tiered.environment.steps import (
+from nimbus_tiers.environment.steps import (
     AiderStep,
     ClaudeCodeStep,
     GroqApiKeyStep,

@@ -1,4 +1,4 @@
-"""Tests for nimbus_tiered.generator.file_writer."""
+"""Tests for nimbus_tiers.generator.file_writer."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from nimbus_tiered.generator.file_writer import (
+from nimbus_tiers.generator.file_writer import (
     FileWriter,
     WriteAction,
     WriteMode,

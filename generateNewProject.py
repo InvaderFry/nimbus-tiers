@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin CLI shim. Delegates to nimbus_tiered.generator.cli:main."""
+"""Thin CLI shim. Delegates to nimbus_tiers.generator.cli:main."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _SRC = _HERE / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from nimbus_tiered.generator.cli import main  # noqa: E402
+from nimbus_tiers.generator.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())

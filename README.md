@@ -1,4 +1,4 @@
-# nimbus-tiered
+# nimbus-tiers
 
 A template repository for the **Hybrid AI Coding Architecture** (Plan → Execute → Review). Clone this once, then run `generateNewProject.py` to scaffold a new project that's pre-wired for the routing flow described in [`hybrid-ai-coding-architecture-v2_1.md`](./hybrid-ai-coding-architecture-v2_1.md).
 
@@ -16,8 +16,8 @@ Follow these steps in order. No installation is required beyond Python 3.11+.
 **Step 1 — Clone this repo**
 
 ```bash
-git clone https://github.com/invaderfry/nimbus-tiered
-cd nimbus-tiered
+git clone https://github.com/invaderfry/nimbus-tiers
+cd nimbus-tiers
 ```
 
 **Step 2 — (Optional but recommended) Check your environment**
@@ -82,7 +82,7 @@ Ask Claude to compare the changes against `PLAN.md` and `TESTS.md` and identify 
 
 ## `nimbus-generate` vs `python3 generateNewProject.py` — what's the difference?
 
-They run **identical code**. `generateNewProject.py` is a thin shim that imports and calls the same internal function (`nimbus_tiered.generator.cli:main`) that the `nimbus-generate` console-script alias also calls. The difference is only in how you invoke them:
+They run **identical code**. `generateNewProject.py` is a thin shim that imports and calls the same internal function (`nimbus_tiers.generator.cli:main`) that the `nimbus-generate` console-script alias also calls. The difference is only in how you invoke them:
 
 | | `python3 generateNewProject.py` | `nimbus-generate` |
 |---|---|---|
@@ -92,7 +92,7 @@ They run **identical code**. `generateNewProject.py` is a thin shim that imports
 
 **Use `python3 generateNewProject.py`** when you just cloned the repo and want to get started immediately.
 
-**Use `nimbus-generate`** when you want a global command so you don't have to `cd` back into the nimbus-tiered repo each time you scaffold a new project. The same applies to `nimbus-setup` vs `python3 setupEnvironment.py`.
+**Use `nimbus-generate`** when you want a global command so you don't have to `cd` back into the nimbus-tiers repo each time you scaffold a new project. The same applies to `nimbus-setup` vs `python3 setupEnvironment.py`.
 
 ---
 

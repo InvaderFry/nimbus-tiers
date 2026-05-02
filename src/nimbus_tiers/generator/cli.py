@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 from typing import Mapping
 
-from nimbus_tiered.generator.cloud_only_path import CloudOnlyPath
-from nimbus_tiered.generator.file_writer import FileWriter, WriteMode
-from nimbus_tiered.generator.full_hybrid_path import FullHybridPath
-from nimbus_tiered.generator.git_initializer import GitInitializer
-from nimbus_tiered.generator.light_local_path import LightLocalPath
-from nimbus_tiered.generator.project_generator import ProjectGenerator
-from nimbus_tiered.generator.setup_path import SetupPath
+from nimbus_tiers.generator.cloud_only_path import CloudOnlyPath
+from nimbus_tiers.generator.file_writer import FileWriter, WriteMode
+from nimbus_tiers.generator.full_hybrid_path import FullHybridPath
+from nimbus_tiers.generator.git_initializer import GitInitializer
+from nimbus_tiers.generator.light_local_path import LightLocalPath
+from nimbus_tiers.generator.project_generator import ProjectGenerator
+from nimbus_tiers.generator.setup_path import SetupPath
 
 
 PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -27,7 +27,7 @@ PATH_REGISTRY: Mapping[str, type[SetupPath]] = {
 
 
 def _repo_root() -> Path:
-    """Return the nimbus-tiered repo root (two levels up from this file)."""
+    """Return the nimbus-tiers repo root (two levels up from this file)."""
     return Path(__file__).resolve().parents[3]
 
 

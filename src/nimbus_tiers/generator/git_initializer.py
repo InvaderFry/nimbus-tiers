@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 
-DEFAULT_COMMIT_MESSAGE = "Initial scaffold from nimbus-tiered architecture template"
+DEFAULT_COMMIT_MESSAGE = "Initial scaffold from nimbus-tiers architecture template"
 
 
 class GitInitAction(enum.Enum):

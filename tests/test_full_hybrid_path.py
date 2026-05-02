@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from nimbus_tiered.generator.full_hybrid_path import FullHybridPath
-from nimbus_tiered.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.generator.full_hybrid_path import FullHybridPath
+from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
 
 
 REPO_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"

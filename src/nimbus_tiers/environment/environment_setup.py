@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
-from nimbus_tiered.environment.setup_step import (
+from nimbus_tiers.environment.setup_step import (
     CheckResult,
     CheckStatus,
     InstallResult,

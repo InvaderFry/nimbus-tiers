@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from nimbus_tiered.environment.setup_step import (
+from nimbus_tiers.environment.setup_step import (
     CheckResult,
     CheckStatus,
     InstallResult,
