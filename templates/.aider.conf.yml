@@ -1,11 +1,11 @@
 # Aider configuration — Path C (Full Hybrid)
-# Default executor: local Devstral 24B served by TabbyAPI on localhost:5000.
+# Default executor: local Qwen3-32B served by TabbyAPI on localhost:5000.
 # Mid-session swaps:
 #   /model groq/llama-3.3-70b-versatile     # Tier 2 fallback
 #   /model anthropic/claude-opus-4-7        # Tier 3 escalation
 #   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
 
-model: openai/devstral-small-24b
+model: openai/Qwen3-32B-exl3
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
