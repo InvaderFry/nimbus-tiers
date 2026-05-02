@@ -1,4 +1,4 @@
-# BuildThisRepoFromArchitecture.md — nimbus-tiered Template Repo
+# BuildThisRepoFromArchitecture.md — nimbus-tiers Template Repo
 
 **Date:** 2026-04-28
 **Branch:** `claude/create-architecture-plan-SFwBL`
@@ -10,7 +10,7 @@
 
 ## Objective
 
-Turn this repo (`nimbus-tiered`) into a reusable **template repository** that scaffolds new projects pre-wired for the Hybrid AI Coding Architecture (Plan → Execute → Review). The repo ships two Python CLIs:
+Turn this repo (`nimbus-tiers`) into a reusable **template repository** that scaffolds new projects pre-wired for the Hybrid AI Coding Architecture (Plan → Execute → Review). The repo ships two Python CLIs:
 
 1. **`generateNewProject.py`** — creates a new project folder one directory above this repo, copies template files (CONTEXT.md, VERIFY.md, CLAUDE.md, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, README.md) into it, and runs `git init` + an initial commit. Idempotent (skip-existing by default; `--force` and `--diff` flags available).
 2. **`setupEnvironment.py`** — checks the host machine for the Path C runtime stack (NVIDIA driver, Ollama, TabbyAPI/ExLlamaV3, Aider, Claude Code, env vars) and offers to install/configure each missing piece. Idempotent — never overrides anything already present without explicit user confirmation.
@@ -30,17 +30,17 @@ Path C (Full Hybrid: Ollama + TabbyAPI/ExLlamaV3) is the only fully-implemented 
 ## Target Repo Layout (when this plan is complete)
 
 ```
-nimbus-tiered/
+nimbus-tiers/
 ├── hybrid-ai-coding-architecture-v2_1.md   (already exists)
 ├── BuildThisRepoFromArchitecture.md         (this file)
 ├── ProgressBuildingRepo.md                  (resume tracker)
 ├── README.md                                (template-repo usage instructions)
 ├── .gitignore
 ├── pyproject.toml                           (stdlib-only; metadata + entry points)
-├── generateNewProject.py                    (thin CLI shim → src.nimbus_tiered.generator)
-├── setupEnvironment.py                      (thin CLI shim → src.nimbus_tiered.environment)
+├── generateNewProject.py                    (thin CLI shim → src.nimbus_tiers.generator)
+├── setupEnvironment.py                      (thin CLI shim → src.nimbus_tiers.environment)
 ├── src/
-│   └── nimbus_tiered/
+│   └── nimbus_tiers/
 │       ├── __init__.py
 │       ├── generator/
 │       │   ├── __init__.py
@@ -111,14 +111,14 @@ nimbus-tiered/
 **Tests:** Each template file exists, is non-empty, and `grep -l '{{PROJECT_NAME}}'` shows substitution markers only where expected.
 
 ### Step 3: Implement `FileWriter` with idempotency policy
-**File(s):** `src/nimbus_tiered/generator/file_writer.py`, `tests/test_file_writer.py`
+**File(s):** `src/nimbus_tiers/generator/file_writer.py`, `tests/test_file_writer.py`
 **Change:** Create a `FileWriter` class with three modes — `SKIP` (default; warn + skip if dest exists), `FORCE` (overwrite), `DIFF` (print unified diff vs. existing dest, write nothing). Single public method `write(src_path: Path, dest_path: Path, substitutions: dict[str, str] | None = None) -> WriteResult`. `WriteResult` is a dataclass with `action: Literal["written", "skipped", "diffed"]` and `dest: Path`.
 **Purpose:** Centralize the "check before override" requirement so every file copy is consistent and testable.
 **Edge cases:** Create parent directories as needed. If `dest_path` exists and is a directory but `src_path` is a file (or vice versa), raise `IsADirectoryError`/`NotADirectoryError`. Substitution must apply to text files only — detect binary by attempting UTF-8 decode and falling back to raw bytes copy if it fails.
 **Tests:** Unit tests covering each of the three modes for: new file, existing identical file, existing different file, file with `{{PROJECT_NAME}}` placeholder, binary file (use a small PNG or arbitrary `bytes`), nested destination requiring `mkdir -p`.
 
 ### Step 4: Implement `SetupPath` ABC and `FullHybridPath`
-**File(s):** `src/nimbus_tiered/generator/setup_path.py`, `src/nimbus_tiered/generator/full_hybrid_path.py`, `tests/test_full_hybrid_path.py`
+**File(s):** `src/nimbus_tiers/generator/setup_path.py`, `src/nimbus_tiers/generator/full_hybrid_path.py`, `tests/test_full_hybrid_path.py`
 **Change:**
   - `SetupPath` (ABC): defines `name: str` (class attr), `template_files() -> list[TemplateSpec]` (abstract), `post_copy_hooks(project_root: Path) -> None` (default no-op). `TemplateSpec` is a dataclass with `src_relative: Path`, `dest_relative: Path`.
   - `FullHybridPath` (concrete): `name = "full-hybrid"`. `template_files()` returns the full list of files from Step 2 mapped to their destinations in the new project. `post_copy_hooks` is no-op for now (git init is handled by `ProjectGenerator`, not the path).
@@ -127,15 +127,15 @@ nimbus-tiered/
 **Tests:** `FullHybridPath().template_files()` returns the expected list; every `src_relative` exists under `templates/`; no duplicate destinations.
 
 ### Step 5: Implement `ProjectGenerator` orchestrator
-**File(s):** `src/nimbus_tiered/generator/project_generator.py`, `tests/test_project_generator.py`
+**File(s):** `src/nimbus_tiers/generator/project_generator.py`, `tests/test_project_generator.py`
 **Change:** `ProjectGenerator` takes a `SetupPath` instance, a `FileWriter`, and a `GitInitializer` (Step 7) via constructor injection. Public method `generate(project_name: str, project_path: Path) -> GenerationReport` which: (1) creates `project_path` if missing, (2) iterates the path's `template_files()` and calls `FileWriter.write(...)` for each with `{"PROJECT_NAME": project_name}` substitution, (3) calls `path.post_copy_hooks(project_path)`, (4) calls `GitInitializer.initialize(project_path)`, (5) returns a `GenerationReport` (counts of written/skipped/diffed files plus git init result).
 **Purpose:** Dependency-injected orchestrator keeps the generator testable (mock `FileWriter` + `GitInitializer` in tests) and lets us swap setup paths via constructor.
 **Edge cases:** If `project_path` exists and is non-empty, generation must still proceed (idempotency — user might be re-running to add a missing file). If `project_path` is a file, fail loudly.
 **Tests:** Generator with a mock `SetupPath` returning two `TemplateSpec`s, a mock `FileWriter`, and a mock `GitInitializer` produces a correct `GenerationReport`. Substitution dict is passed through. Re-running over an existing populated dir reports all-skipped.
 
 ### Step 6: Implement `generateNewProject.py` CLI
-**File(s):** `generateNewProject.py`, `src/nimbus_tiered/generator/__init__.py`
-**Change:** Top-level `generateNewProject.py` is a thin shim that imports and calls `nimbus_tiered.generator.cli:main`. The CLI:
+**File(s):** `generateNewProject.py`, `src/nimbus_tiers/generator/__init__.py`
+**Change:** Top-level `generateNewProject.py` is a thin shim that imports and calls `nimbus_tiers.generator.cli:main`. The CLI:
   - Positional arg `project_name` (optional; if missing, interactive prompt).
   - `--path PATH` — override default destination (default: `<this-repo-parent>/<project_name>`).
   - `--force` — overwrite existing files.
@@ -147,14 +147,14 @@ nimbus-tiered/
 **Tests:** Smoke test in Step 12.
 
 ### Step 7: Implement `GitInitializer`
-**File(s):** `src/nimbus_tiered/generator/git_initializer.py`
-**Change:** `GitInitializer` class with method `initialize(project_path: Path) -> GitInitResult`. Behavior: if `.git/` already exists, skip with a warning. Otherwise run `git init`, `git add .`, `git commit -m "Initial scaffold from nimbus-tiered architecture template"`. Never sets a remote, never pushes. Uses `subprocess.run(check=True, capture_output=True)`.
+**File(s):** `src/nimbus_tiers/generator/git_initializer.py`
+**Change:** `GitInitializer` class with method `initialize(project_path: Path) -> GitInitResult`. Behavior: if `.git/` already exists, skip with a warning. Otherwise run `git init`, `git add .`, `git commit -m "Initial scaffold from nimbus-tiers architecture template"`. Never sets a remote, never pushes. Uses `subprocess.run(check=True, capture_output=True)`.
 **Purpose:** Self-contained git bootstrap so the new project is on a clean trunk from step zero.
 **Edge cases:** If `git` is not on PATH, fail with a clear error message (don't crash the whole generation — return a `GitInitResult.skipped` with reason). If `git config user.email` is unset, the commit will fail — surface that error verbatim and tell the user to set their git identity.
 **Tests:** Run against a tempdir; verify `.git/` is created and `git log` shows the expected commit. Re-run; verify it skips.
 
 ### Step 8: Implement `SetupStep` ABC + concrete check/install steps for Path C
-**File(s):** `src/nimbus_tiered/environment/setup_step.py`, `src/nimbus_tiered/environment/steps/*.py`, `tests/test_environment_steps.py`
+**File(s):** `src/nimbus_tiers/environment/setup_step.py`, `src/nimbus_tiers/environment/steps/*.py`, `tests/test_environment_steps.py`
 **Change:**
   - `SetupStep` (ABC): `name: str`, `check() -> CheckResult` (abstract; returns `present`/`missing`/`partial` + detail string), `install(interactive: bool) -> InstallResult` (abstract; performs install, returns `installed`/`skipped`/`failed`). Default `install` raises `NotImplementedError` with a "manual step required" message — useful for steps like NVIDIA driver where we can only check.
   - Concrete steps:
@@ -170,7 +170,7 @@ nimbus-tiered/
 **Tests:** Each step's `check()` is unit-tested with a mocked `subprocess.run` returning known stdout/stderr/returncode. `install()` paths use a mock prompt function and verify the right commands would be run (without actually running them).
 
 ### Step 9: Implement `EnvironmentSetup` orchestrator + `setupEnvironment.py` CLI
-**File(s):** `src/nimbus_tiered/environment/environment_setup.py`, `setupEnvironment.py`
+**File(s):** `src/nimbus_tiers/environment/environment_setup.py`, `setupEnvironment.py`
 **Change:** `EnvironmentSetup` takes a list of `SetupStep`s and runs them in order. For each step: call `check()`, print status, and if missing/partial, prompt for install (unless `--yes`). Return a final report.
 
 `setupEnvironment.py` shim:
@@ -182,7 +182,7 @@ nimbus-tiered/
 **Tests:** `EnvironmentSetup` orchestrator unit-tested with a list of fake `SetupStep`s.
 
 ### Step 10: Add stub `CloudOnlyPath` and `LightLocalPath`
-**File(s):** `src/nimbus_tiered/generator/cloud_only_path.py`, `src/nimbus_tiered/generator/light_local_path.py`
+**File(s):** `src/nimbus_tiers/generator/cloud_only_path.py`, `src/nimbus_tiers/generator/light_local_path.py`
 **Change:** Both classes inherit `SetupPath`, set `name`, and override `template_files()` to raise `NotImplementedError("CloudOnlyPath is planned but not yet implemented. Track in BuildThisRepoFromArchitecture.md follow-ups.")`.
 **Purpose:** Make the OOP extension point visible. Users who try `--path-type cloud-only` get a clear "not yet" error, not a `KeyError`.
 **Edge cases:** Don't accidentally register them in the CLI argparse choices in a way that hides the not-implemented error — they should be argparse-accepted so the user gets the descriptive `NotImplementedError`.
@@ -204,7 +204,7 @@ nimbus-tiered/
 
 ### Step 13: Final README polish, commit, and push
 **File(s):** `README.md`, `ProgressBuildingRepo.md`
-**Change:** Update `README.md` with verified usage examples from Step 12. Mark all steps complete in `ProgressBuildingRepo.md`. Commit with message `"Build nimbus-tiered template repo: generator + environment CLIs (Path C)"` and push to `claude/create-architecture-plan-SFwBL`.
+**Change:** Update `README.md` with verified usage examples from Step 12. Mark all steps complete in `ProgressBuildingRepo.md`. Commit with message `"Build nimbus-tiers template repo: generator + environment CLIs (Path C)"` and push to `claude/create-architecture-plan-SFwBL`.
 **Purpose:** Ship a working state.
 **Edge cases:** Don't push if any test fails. Don't commit smoke-test artifacts (`/tmp/smoke-test` is outside the repo, but double-check `git status`).
 **Tests:** `git status` clean after commit; remote branch updated.

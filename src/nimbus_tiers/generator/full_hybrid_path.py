@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nimbus_tiered.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
 
 
 class FullHybridPath(SetupPath):

@@ -1,6 +1,6 @@
 # {{PROJECT_NAME}}
 
-Scaffolded from the [nimbus-tiered](https://github.com/invaderfry/nimbus-tiered) template. This project follows the **Hybrid AI Coding Architecture** — a three-phase Plan → Execute → Review flow that routes work across local models, free cloud APIs, and frontier subscriptions.
+Scaffolded from the [nimbus-tiers](https://github.com/invaderfry/nimbus-tiers) template. This project follows the **Hybrid AI Coding Architecture** — a three-phase Plan → Execute → Review flow that routes work across local models, free cloud APIs, and frontier subscriptions.
 
 ## The flow
 

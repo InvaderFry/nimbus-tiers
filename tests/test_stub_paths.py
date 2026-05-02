@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from nimbus_tiered.generator.cloud_only_path import CloudOnlyPath
-from nimbus_tiered.generator.light_local_path import LightLocalPath
+from nimbus_tiers.generator.cloud_only_path import CloudOnlyPath
+from nimbus_tiers.generator.light_local_path import LightLocalPath
 
 
 def test_cloud_only_can_be_instantiated() -> None:

@@ -24,10 +24,10 @@ If a session ends mid-task, the next session can read this file alone to know ex
 
 - [x] **Step 1** — Top-level repo metadata: `README.md`, `.gitignore`, `pyproject.toml`
 - [x] **Step 2** — `templates/` directory: CONTEXT.md, VERIFY.md, CLAUDE.md, README.md, .aider.conf.yml, .aiderignore, .gitignore, plans/README.md, logs/ai-routing.csv, docs/architecture.md
-- [x] **Step 3** — `src/nimbus_tiered/generator/file_writer.py` + `tests/test_file_writer.py` (12 tests, skip/force/diff modes)
+- [x] **Step 3** — `src/nimbus_tiers/generator/file_writer.py` + `tests/test_file_writer.py` (12 tests, skip/force/diff modes)
 - [x] **Step 4** — `SetupPath` ABC + `FullHybridPath` + `tests/test_full_hybrid_path.py` (9 tests)
 - [x] **Step 5** — `ProjectGenerator` orchestrator + `tests/test_project_generator.py` (10 tests, includes GitInitializer tests)
-- [x] **Step 6** — `generateNewProject.py` CLI shim + `nimbus_tiered.generator.cli` (--path, --force, --diff, --path-type)
+- [x] **Step 6** — `generateNewProject.py` CLI shim + `nimbus_tiers.generator.cli` (--path, --force, --diff, --path-type)
 - [x] **Step 7** — `GitInitializer` (init + initial commit, idempotent, captures errors)
 - [x] **Step 8** — `SetupStep` ABC + Path C concrete steps (NvidiaDriverStep, PythonStep, OllamaStep, TabbyApiStep, AiderStep, ClaudeCodeStep, EnvVarStep)
 - [x] **Step 9** — `EnvironmentSetup` orchestrator + `setupEnvironment.py` CLI (--check-only, --yes, --path-type)

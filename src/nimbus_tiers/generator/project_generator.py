@@ -12,13 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
-from nimbus_tiered.generator.file_writer import FileWriter, WriteAction, WriteResult
-from nimbus_tiered.generator.git_initializer import (
+from nimbus_tiers.generator.file_writer import FileWriter, WriteAction, WriteResult
+from nimbus_tiers.generator.git_initializer import (
     GitInitAction,
     GitInitializer,
     GitInitResult,
 )
-from nimbus_tiered.generator.setup_path import SetupPath
+from nimbus_tiers.generator.setup_path import SetupPath
 
 
 @dataclass

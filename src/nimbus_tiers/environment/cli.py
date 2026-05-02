@@ -6,9 +6,9 @@ import argparse
 import sys
 from typing import Mapping, Sequence
 
-from nimbus_tiered.environment.environment_setup import EnvironmentSetup
-from nimbus_tiered.environment.setup_step import SetupStep
-from nimbus_tiered.environment.steps import (
+from nimbus_tiers.environment.environment_setup import EnvironmentSetup
+from nimbus_tiers.environment.setup_step import SetupStep
+from nimbus_tiers.environment.steps import (
     AiderStep,
     ClaudeCodeStep,
     GroqApiKeyStep,

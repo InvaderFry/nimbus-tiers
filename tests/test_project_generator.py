@@ -8,22 +8,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nimbus_tiered.generator.file_writer import (
+from nimbus_tiers.generator.file_writer import (
     FileWriter,
     WriteAction,
     WriteMode,
     WriteResult,
 )
-from nimbus_tiered.generator.git_initializer import (
+from nimbus_tiers.generator.git_initializer import (
     DEFAULT_COMMIT_MESSAGE,
     GitInitAction,
     GitInitializer,
 )
-from nimbus_tiered.generator.project_generator import (
+from nimbus_tiers.generator.project_generator import (
     GenerationReport,
     ProjectGenerator,
 )
-from nimbus_tiered.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
 
 
 class _FakePath(SetupPath):
