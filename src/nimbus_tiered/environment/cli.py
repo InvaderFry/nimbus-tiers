@@ -7,12 +7,13 @@ import sys
 from typing import Mapping, Sequence
 
 from nimbus_tiered.environment.environment_setup import EnvironmentSetup
-from nimbus_tiered.environment.setup_step import EnvVarStep, SetupStep
+from nimbus_tiered.environment.setup_step import SetupStep
 from nimbus_tiered.environment.steps import (
     AiderStep,
     ClaudeCodeStep,
     GroqApiKeyStep,
     NvidiaDriverStep,
+    OllamaServerConfigStep,
     OllamaStep,
     PythonStep,
     TabbyApiStep,
@@ -25,8 +26,7 @@ def _full_hybrid_steps() -> list[SetupStep]:
         PythonStep(),
         NvidiaDriverStep(),
         OllamaStep(),
-        EnvVarStep("OLLAMA_FLASH_ATTENTION", "1"),
-        EnvVarStep("OLLAMA_KV_CACHE_TYPE", "q8_0"),
+        OllamaServerConfigStep(),
         TabbyApiStep(),
         AiderStep(),
         GroqApiKeyStep(),

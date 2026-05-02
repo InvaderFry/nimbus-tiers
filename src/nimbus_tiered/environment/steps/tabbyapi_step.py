@@ -82,6 +82,12 @@ class TabbyApiStep(SetupStep):
         url = self._prompt("TabbyAPI endpoint URL (e.g. http://192.168.1.100:5000)")
         if not url:
             return InstallResult(InstallStatus.SKIPPED, "no URL entered")
+        self._log(
+            "\nNote: if your TabbyAPI instance has authentication enabled, you will also\n"
+            "need to set TABBYAPI_API_KEY in your shell. Find the key in config.yml on\n"
+            "your Windows host (api_key field), then add it to ~/.bashrc:\n"
+            "    export TABBYAPI_API_KEY=\"your-key-here\"\n"
+        )
         if self._confirm(f"Append export {TABBYAPI_URL_VAR}={url!r} to ~/.bashrc?"):
             try:
                 self._rc_writer(TABBYAPI_URL_VAR, url)

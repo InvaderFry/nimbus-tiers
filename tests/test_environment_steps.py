@@ -29,6 +29,7 @@ from nimbus_tiered.environment.steps import (
     ClaudeCodeStep,
     GroqApiKeyStep,
     NvidiaDriverStep,
+    OllamaServerConfigStep,
     OllamaStep,
     PythonStep,
     TabbyApiStep,
@@ -265,6 +266,77 @@ def test_tabbyapi_install_assume_yes_clones_locally(tmp_path: Path) -> None:
     assert result.status is InstallStatus.INSTALLED
 
 
+# ----- OllamaServerConfigStep -----------------------------------------------
+
+
+def test_ollama_server_config_present_when_both_vars_set() -> None:
+    step = OllamaServerConfigStep(env_lookup={"OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_KV_CACHE_TYPE": "q8_0"}.get)
+    assert step.check().status is CheckStatus.PRESENT
+
+
+def test_ollama_server_config_missing_when_vars_absent() -> None:
+    step = OllamaServerConfigStep(env_lookup=lambda _k: None)
+    assert step.check().status is CheckStatus.MISSING
+
+
+def test_ollama_server_config_partial_when_remote() -> None:
+    step = OllamaServerConfigStep(
+        env_lookup={"OLLAMA_HOST": "http://192.168.1.100:11434"}.get
+    )
+    result = step.check()
+    assert result.status is CheckStatus.PARTIAL
+    assert "Windows host" in result.detail
+
+
+def test_ollama_server_config_install_remote_returns_manual_with_instructions() -> None:
+    logged: list[str] = []
+    step = OllamaServerConfigStep(
+        env_lookup={"OLLAMA_HOST": "http://192.168.1.100:11434"}.get,
+        logger=logged.append,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.MANUAL
+    combined = "\n".join(logged)
+    assert "setx OLLAMA_FLASH_ATTENTION 1" in combined
+    assert "setx OLLAMA_KV_CACHE_TYPE q8_0" in combined
+    assert "system tray" in combined
+
+
+def test_ollama_server_config_install_local_persists_both_vars() -> None:
+    captured: list[tuple[str, str]] = []
+    step = OllamaServerConfigStep(
+        env_lookup=lambda _k: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert ("OLLAMA_FLASH_ATTENTION", "1") in captured
+    assert ("OLLAMA_KV_CACHE_TYPE", "q8_0") in captured
+
+
+def test_ollama_server_config_install_local_skipped_when_declined() -> None:
+    step = OllamaServerConfigStep(
+        env_lookup=lambda _k: None,
+        confirm=lambda _p: False,
+        logger=lambda _m: None,
+    )
+    assert step.install().status is InstallStatus.SKIPPED
+
+
+def test_ollama_server_config_install_assume_yes_sets_local_vars() -> None:
+    captured: list[tuple[str, str]] = []
+    step = OllamaServerConfigStep(
+        env_lookup=lambda _k: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+        logger=lambda _m: None,
+    )
+    result = step.install(assume_yes=True)
+    assert result.status is InstallStatus.INSTALLED
+    assert len(captured) == 2
+
+
 # ----- GroqApiKeyStep -------------------------------------------------------
 
 
@@ -452,6 +524,20 @@ def test_orchestrator_all_present_false_when_install_failed() -> None:
     step = _FakeStep("a", CheckStatus.MISSING, InstallStatus.FAILED)
     setup = EnvironmentSetup([step])
     assert not setup.run(check_only=False, assume_yes=True).all_present
+
+
+def test_orchestrator_all_present_true_when_install_is_manual() -> None:
+    # MANUAL means the script printed instructions — treated as handled.
+    step = _FakeStep("a", CheckStatus.MISSING, InstallStatus.MANUAL)
+    setup = EnvironmentSetup([step])
+    assert setup.run(check_only=False, assume_yes=True).all_present
+
+
+def test_orchestrator_all_present_true_for_partial_with_manual_install() -> None:
+    # Models the remote-Ollama server-config case: PARTIAL check + MANUAL install.
+    step = _FakeStep("a", CheckStatus.PARTIAL, InstallStatus.MANUAL)
+    setup = EnvironmentSetup([step])
+    assert setup.run(check_only=False, assume_yes=True).all_present
 
 
 def test_environment_report_render_includes_all_step_names() -> None:
