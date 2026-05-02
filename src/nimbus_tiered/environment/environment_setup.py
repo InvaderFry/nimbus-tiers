@@ -37,10 +37,13 @@ class EnvironmentReport:
 
     @property
     def all_present(self) -> bool:
+        # MANUAL means the script printed instructions and the user must act — treated as
+        # handled since the script has done everything it can programmatically.
+        _handled = {InstallStatus.INSTALLED, InstallStatus.MANUAL}
         for step in self.steps:
             if step.check.status is CheckStatus.PRESENT:
                 continue
-            if step.install is not None and step.install.status is InstallStatus.INSTALLED:
+            if step.install is not None and step.install.status in _handled:
                 continue
             return False
         return True

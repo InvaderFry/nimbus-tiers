@@ -1,4 +1,11 @@
-"""Aider presence check + optional install via aider-install."""
+"""Aider presence check + install via pipx.
+
+pipx is preferred over plain pip because:
+- Aider is a CLI tool, not a library — pipx is designed for exactly this.
+- pipx creates and manages the venv internally; no activation needed.
+- pipx avoids PEP 668 "externally-managed-environment" errors on macOS
+  Homebrew Python and Ubuntu 23.04+/WSL.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +18,24 @@ from nimbus_tiered.environment.setup_step import (
     InstallStatus,
     SetupStep,
 )
+
+_PIPX_INSTALL_INSTRUCTIONS = """\
+pipx is not installed. Install it first, then run this setup again:
+
+  macOS (Homebrew):
+    brew install pipx
+    pipx ensurepath
+
+  Ubuntu / WSL (apt):
+    sudo apt install pipx
+    pipx ensurepath
+
+  Any platform (pip --user, no system packages modified):
+    python3 -m pip install --user pipx
+    python3 -m pipx ensurepath
+
+  Then restart your shell and re-run setupEnvironment.py.\
+"""
 
 
 class AiderStep(SetupStep):
@@ -29,29 +54,29 @@ class AiderStep(SetupStep):
         return CheckResult(CheckStatus.PRESENT, stdout.strip() or "aider present")
 
     def install(self, assume_yes: bool = False) -> InstallResult:
+        if self._which("pipx") is None:
+            self._log(_PIPX_INSTALL_INSTRUCTIONS)
+            return InstallResult(
+                InstallStatus.MANUAL,
+                "install pipx (see instructions above), then re-run setupEnvironment.py",
+            )
+        return self._pipx_install(assume_yes)
+
+    def _pipx_install(self, assume_yes: bool) -> InstallResult:
         prompt = (
-            "Install Aider with:\n"
-            f"    {sys.executable} -m pip install aider-install\n"
-            f"    {sys.executable} -m aider_install\n"
+            "Install Aider via pipx (isolated venv, global `aider` command, no system Python conflicts):\n"
+            "    pipx install aider-chat\n"
             "Proceed?"
         )
         if not self._ask(prompt, assume_yes):
             return InstallResult(InstallStatus.SKIPPED, "user declined")
-        rc, stdout, stderr = self._capture(
-            sys.executable, "-m", "pip", "install", "aider-install"
-        )
+        rc, stdout, stderr = self._capture("pipx", "install", "aider-chat")
         if rc != 0:
             return InstallResult(
                 InstallStatus.FAILED,
-                f"pip install exited {rc}: {stderr.strip() or stdout.strip()}",
+                f"pipx install exited {rc}: {stderr.strip() or stdout.strip()}",
             )
-        rc, stdout, stderr = self._capture(sys.executable, "-m", "aider_install")
-        if rc != 0:
-            return InstallResult(
-                InstallStatus.FAILED,
-                f"aider_install exited {rc}: {stderr.strip() or stdout.strip()}",
-            )
-        return InstallResult(InstallStatus.INSTALLED, "Aider installed via aider-install")
+        return InstallResult(InstallStatus.INSTALLED, "Aider installed via pipx")
 
 
 __all__ = ["AiderStep"]
