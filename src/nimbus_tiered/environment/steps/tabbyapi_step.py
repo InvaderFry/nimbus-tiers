@@ -13,6 +13,7 @@ from nimbus_tiered.environment.setup_step import (
     InstallStatus,
     Prompter,
     SetupStep,
+    read_bashrc_value,
 )
 
 
@@ -36,12 +37,14 @@ class TabbyApiStep(SetupStep):
         tabby_path: str = DEFAULT_TABBY_PATH,
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
+        rc_reader: Callable[[str], str | None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.tabby_path = tabby_path
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
         self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
+        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
 
     def _resolved_path(self) -> Path:
         return Path(os.path.expanduser(self.tabby_path))
@@ -79,6 +82,14 @@ class TabbyApiStep(SetupStep):
         return self._clone_local(assume_yes)
 
     def _configure_remote(self) -> InstallResult:
+        existing = self._rc_reader(TABBYAPI_URL_VAR)
+        if existing:
+            self._log(f"Found {TABBYAPI_URL_VAR}={existing!r} in ~/.bashrc.")
+            if self._confirm(f"Is {existing!r} the correct TabbyAPI endpoint?"):
+                return InstallResult(
+                    InstallStatus.INSTALLED,
+                    f"{TABBYAPI_URL_VAR} already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                )
         url = self._prompt("TabbyAPI endpoint URL (e.g. http://192.168.1.100:5000)")
         if not url:
             return InstallResult(InstallStatus.SKIPPED, "no URL entered")

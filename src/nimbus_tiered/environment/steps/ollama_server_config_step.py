@@ -17,6 +17,7 @@ from nimbus_tiered.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    read_bashrc_value,
 )
 
 
@@ -60,11 +61,13 @@ class OllamaServerConfigStep(SetupStep):
         self,
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
+        rc_reader: Callable[[str], str | None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
         self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
+        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
 
     def _is_remote(self) -> bool:
         return bool(self._env_lookup(OLLAMA_HOST_VAR))
@@ -97,12 +100,19 @@ class OllamaServerConfigStep(SetupStep):
         missing = {k: v for k, v in OLLAMA_SETTINGS.items() if self._env_lookup(k) != v}
         if not missing:
             return InstallResult(InstallStatus.SKIPPED, "all settings already present")
-        lines = "\n".join(f"    export {k}={v}" for k, v in missing.items())
+        already_in_rc = {k: v for k, v in missing.items() if self._rc_reader(k) == v}
+        to_write = {k: v for k, v in missing.items() if k not in already_in_rc}
+        if not to_write:
+            return InstallResult(
+                InstallStatus.INSTALLED,
+                "settings already in ~/.bashrc; run `source ~/.bashrc` to apply",
+            )
+        lines = "\n".join(f"    export {k}={v}" for k, v in to_write.items())
         prompt = f"Append these Ollama performance settings to ~/.bashrc?\n{lines}"
         if not self._ask(prompt, assume_yes):
             return InstallResult(InstallStatus.SKIPPED, "user declined")
         try:
-            for k, v in missing.items():
+            for k, v in to_write.items():
                 self._rc_writer(k, v)
         except OSError as exc:
             return InstallResult(InstallStatus.FAILED, str(exc))

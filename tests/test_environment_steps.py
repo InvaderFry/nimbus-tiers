@@ -160,6 +160,7 @@ def test_ollama_install_remote_persists_url() -> None:
         confirm=lambda _p: True,
         logger=lambda _m: None,
         rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
@@ -171,6 +172,7 @@ def test_ollama_install_remote_skipped_when_no_url_entered() -> None:
     step = OllamaStep(
         prompter=lambda _p: next(prompts) or None,
         logger=lambda _m: None,
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.SKIPPED
@@ -182,10 +184,42 @@ def test_ollama_install_remote_not_persisted_when_user_declines_bashrc() -> None
         prompter=lambda _p: next(prompts),
         confirm=lambda _p: False,
         logger=lambda _m: None,
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.SKIPPED
     assert "not persisted" in result.detail
+
+
+def test_ollama_install_remote_uses_bashrc_value_when_confirmed() -> None:
+    step = OllamaStep(
+        prompter=lambda _p: (_ for _ in ()).throw(AssertionError("should not prompt for URL")),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+        rc_reader=lambda _v: "http://192.168.1.100:11434",
+    )
+    # Simulate user choosing 'r' then confirming the found URL
+    prompts = iter(["r"])
+    step._prompter = lambda _p: next(prompts)  # type: ignore[method-assign]
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in ~/.bashrc" in result.detail
+
+
+def test_ollama_install_remote_prompts_for_new_url_when_bashrc_value_rejected() -> None:
+    captured: list[tuple[str, str]] = []
+    confirms = iter([False, True])  # first: reject existing; second: confirm write new
+    prompts = iter(["r", "http://10.0.0.5:11434"])
+    step = OllamaStep(
+        prompter=lambda _p: next(prompts),
+        confirm=lambda _p: next(confirms),
+        logger=lambda _m: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: "http://192.168.1.100:11434",
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert captured == [("OLLAMA_HOST", "http://10.0.0.5:11434")]
 
 
 # ----- TabbyApiStep ---------------------------------------------------------
@@ -236,6 +270,7 @@ def test_tabbyapi_install_remote_persists_url() -> None:
         confirm=lambda _p: True,
         logger=lambda _m: None,
         rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
@@ -248,10 +283,40 @@ def test_tabbyapi_install_remote_not_persisted_when_user_declines_bashrc() -> No
         prompter=lambda _p: next(prompts),
         confirm=lambda _p: False,
         logger=lambda _m: None,
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.SKIPPED
     assert "not persisted" in result.detail
+
+
+def test_tabbyapi_install_remote_uses_bashrc_value_when_confirmed() -> None:
+    prompts = iter(["r"])
+    step = TabbyApiStep(
+        prompter=lambda _p: next(prompts),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+        rc_reader=lambda _v: "http://192.168.1.100:5000",
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in ~/.bashrc" in result.detail
+
+
+def test_tabbyapi_install_remote_prompts_for_new_url_when_bashrc_value_rejected() -> None:
+    captured: list[tuple[str, str]] = []
+    confirms = iter([False, True])
+    prompts = iter(["r", "http://10.0.0.5:5000"])
+    step = TabbyApiStep(
+        prompter=lambda _p: next(prompts),
+        confirm=lambda _p: next(confirms),
+        logger=lambda _m: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: "http://192.168.1.100:5000",
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert captured == [("TABBYAPI_URL", "http://10.0.0.5:5000")]
 
 
 def test_tabbyapi_install_assume_yes_clones_locally(tmp_path: Path) -> None:
@@ -307,6 +372,7 @@ def test_ollama_server_config_install_local_persists_both_vars() -> None:
     step = OllamaServerConfigStep(
         env_lookup=lambda _k: None,
         rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _k: None,
         confirm=lambda _p: True,
         logger=lambda _m: None,
     )
@@ -319,6 +385,7 @@ def test_ollama_server_config_install_local_persists_both_vars() -> None:
 def test_ollama_server_config_install_local_skipped_when_declined() -> None:
     step = OllamaServerConfigStep(
         env_lookup=lambda _k: None,
+        rc_reader=lambda _k: None,
         confirm=lambda _p: False,
         logger=lambda _m: None,
     )
@@ -330,11 +397,24 @@ def test_ollama_server_config_install_assume_yes_sets_local_vars() -> None:
     step = OllamaServerConfigStep(
         env_lookup=lambda _k: None,
         rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _k: None,
         logger=lambda _m: None,
     )
     result = step.install(assume_yes=True)
     assert result.status is InstallStatus.INSTALLED
     assert len(captured) == 2
+
+
+def test_ollama_server_config_install_returns_installed_when_vars_already_in_bashrc() -> None:
+    bashrc = {"OLLAMA_FLASH_ATTENTION": "1", "OLLAMA_KV_CACHE_TYPE": "q8_0"}
+    step = OllamaServerConfigStep(
+        env_lookup=lambda _k: None,
+        rc_reader=bashrc.get,
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in ~/.bashrc" in result.detail
 
 
 # ----- GroqApiKeyStep -------------------------------------------------------
@@ -366,6 +446,7 @@ def test_groq_install_skipped_when_no_key_entered() -> None:
     step = GroqApiKeyStep(
         prompter=lambda _p: None,
         logger=lambda _m: None,
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.SKIPPED
@@ -378,6 +459,7 @@ def test_groq_install_persists_key_to_bashrc() -> None:
         confirm=lambda _p: True,
         logger=lambda _m: None,
         rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
@@ -389,10 +471,37 @@ def test_groq_install_skipped_when_user_declines_bashrc() -> None:
         prompter=lambda _p: "gsk_testkey123",
         confirm=lambda _p: False,
         logger=lambda _m: None,
+        rc_reader=lambda _v: None,
     )
     result = step.install()
     assert result.status is InstallStatus.SKIPPED
     assert "not persisted" in result.detail
+
+
+def test_groq_install_uses_bashrc_key_when_confirmed() -> None:
+    step = GroqApiKeyStep(
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+        rc_reader=lambda _v: "gsk_existingkey123",
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in ~/.bashrc" in result.detail
+
+
+def test_groq_install_prompts_for_new_key_when_bashrc_key_rejected() -> None:
+    captured: list[tuple[str, str]] = []
+    confirms = iter([False, True])
+    step = GroqApiKeyStep(
+        prompter=lambda _p: "gsk_newkey456",
+        confirm=lambda _p: next(confirms),
+        logger=lambda _m: None,
+        rc_writer=lambda var, val: captured.append((var, val)),
+        rc_reader=lambda _v: "gsk_existingkey123",
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert captured == [("GROQ_API_KEY", "gsk_newkey456")]
 
 
 def test_groq_install_assume_yes_returns_manual() -> None:

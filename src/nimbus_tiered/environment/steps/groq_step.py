@@ -11,6 +11,7 @@ from nimbus_tiered.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    read_bashrc_value,
 )
 
 
@@ -32,11 +33,13 @@ class GroqApiKeyStep(SetupStep):
         self,
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
+        rc_reader: Callable[[str], str | None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
         self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
+        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
 
     def check(self) -> CheckResult:
         key = self._env_lookup(GROQ_API_KEY_VAR)
@@ -60,6 +63,16 @@ class GroqApiKeyStep(SetupStep):
                 InstallStatus.MANUAL,
                 f"set {GROQ_API_KEY_VAR} in your shell or ~/.bashrc and re-run to verify",
             )
+
+        existing = self._rc_reader(GROQ_API_KEY_VAR)
+        if existing:
+            preview = existing[:8] + "..." if len(existing) > 8 else "***"
+            self._log(f"Found {GROQ_API_KEY_VAR}={preview} in ~/.bashrc.")
+            if self._confirm("Is this the correct Groq API key?"):
+                return InstallResult(
+                    InstallStatus.INSTALLED,
+                    f"{GROQ_API_KEY_VAR} already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                )
 
         key = self._prompt(f"Paste your Groq API key (or press Enter to skip)")
         if not key:

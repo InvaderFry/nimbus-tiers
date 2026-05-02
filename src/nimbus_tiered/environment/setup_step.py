@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import enum
 import os
+import re
 import shutil
 import subprocess
 from abc import ABC, abstractmethod
@@ -52,6 +53,26 @@ Runner = Callable[..., subprocess.CompletedProcess]
 Confirm = Callable[[str], bool]
 Logger = Callable[[str], None]
 Prompter = Callable[[str], "str | None"]
+
+
+def read_bashrc_value(var: str, rc_path: str = "~/.bashrc") -> str | None:
+    """Return the last exported value of *var* found in *rc_path*, or None."""
+    path = os.path.expanduser(rc_path)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return None
+    result = None
+    for m in re.finditer(
+        rf'^\s*export\s+{re.escape(var)}=([^\n]*)', content, re.MULTILINE
+    ):
+        raw = m.group(1).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ('"', "'"):
+            raw = raw[1:-1]
+        if raw:
+            result = raw
+    return result
 
 
 def default_confirm(prompt: str) -> bool:
@@ -201,4 +222,5 @@ __all__ = [
     "default_prompter",
     "default_runner",
     "default_logger",
+    "read_bashrc_value",
 ]
