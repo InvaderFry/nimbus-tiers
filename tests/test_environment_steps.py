@@ -410,9 +410,40 @@ def test_aider_check_missing_when_not_on_path() -> None:
     assert step.check().status is CheckStatus.MISSING
 
 
-def test_aider_install_skipped_when_user_declines() -> None:
-    step = AiderStep(confirm=lambda _p: False)
+def test_aider_install_manual_when_pipx_not_available() -> None:
+    logged: list[str] = []
+    step = AiderStep(logger=logged.append)
+    step._which = lambda _cmd: None  # type: ignore[method-assign]
+    result = step.install()
+    assert result.status is InstallStatus.MANUAL
+    combined = "\n".join(logged)
+    assert "pipx" in combined
+    assert "brew install pipx" in combined
+    assert "sudo apt install pipx" in combined
+
+
+def test_aider_install_skipped_when_user_declines_pipx() -> None:
+    step = AiderStep(confirm=lambda _p: False, logger=lambda _m: None)
+    step._which = lambda cmd: "/usr/bin/pipx" if cmd == "pipx" else None  # type: ignore[method-assign]
     assert step.install().status is InstallStatus.SKIPPED
+
+
+def test_aider_install_via_pipx_when_available() -> None:
+    runner = MagicMock(return_value=_proc(stdout="ok"))
+    step = AiderStep(runner=runner, confirm=lambda _p: True, logger=lambda _m: None)
+    step._which = lambda cmd: "/usr/bin/pipx" if cmd == "pipx" else None  # type: ignore[method-assign]
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    invoked = runner.call_args[0][0]
+    assert invoked == ["pipx", "install", "aider-chat"]
+
+
+def test_aider_install_assume_yes_uses_pipx() -> None:
+    runner = MagicMock(return_value=_proc(stdout="ok"))
+    step = AiderStep(runner=runner, logger=lambda _m: None)
+    step._which = lambda cmd: "/usr/bin/pipx" if cmd == "pipx" else None  # type: ignore[method-assign]
+    result = step.install(assume_yes=True)
+    assert result.status is InstallStatus.INSTALLED
 
 
 # ----- ClaudeCodeStep -------------------------------------------------------
