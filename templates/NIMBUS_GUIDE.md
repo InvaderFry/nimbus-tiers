@@ -7,7 +7,7 @@ Scaffolded from the [nimbus-tiers](https://github.com/invaderfry/nimbus-tiers) t
 | Phase | Tool | Output |
 |---|---|---|
 | 1. Plan | Claude Code (frontier) | `PLAN.md`, `TESTS.md`, updated `CONTEXT.md` |
-| 2. Execute | Aider + local Devstral 24B (TabbyAPI) | Series of git commits, one per step |
+| 2. Execute | Aider + local Qwen3-32B (TabbyAPI) | Series of git commits, one per step |
 | 3. Review | Claude Code (frontier) | Fix list or `APPROVED` |
 
 See [`docs/architecture.md`](./docs/architecture.md) for the full reference.

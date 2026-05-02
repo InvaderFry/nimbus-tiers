@@ -14,7 +14,7 @@ This repo uses three handoff artifacts:
 When you start a new feature:
 
 1. **Phase 1 (Planning, you):** Use plan mode to read the codebase, then write `PLAN.md`, `TESTS.md`, and update `CONTEXT.md` if anything new emerged.
-2. **Phase 2 (Execution, local):** The user runs Aider against a local model (Path C: TabbyAPI Devstral 24B) with all three files in `--read` context.
+2. **Phase 2 (Execution, local):** The user runs Aider against a local model (Path C: TabbyAPI Qwen3-32B) with all three files in `--read` context.
 3. **Phase 3 (Review, you):** Compare the diff to `PLAN.md`, `TESTS.md`, `CONTEXT.md`. Run `VERIFY.md`. Produce a numbered fix list or `APPROVED`.
 
 ## Routing rules

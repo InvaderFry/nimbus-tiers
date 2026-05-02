@@ -99,7 +99,7 @@ nimbus-tiers/
 **Change:** Populate each template with the content prescribed by the architecture doc:
   - `CONTEXT.md` / `VERIFY.md` — Appendix E templates with `{{PROJECT_NAME}}` placeholder for repo name.
   - `CLAUDE.md` — project memory file telling Claude Code to read PLAN.md, TESTS.md, CONTEXT.md, VERIFY.md and follow the routing rules from `docs/architecture.md`.
-  - `.aider.conf.yml` — Path C config (TabbyAPI at `http://localhost:5000/v1`, `model: openai/devstral-small-24b`, `auto-commits: true`, `auto-test: true`, `test-cmd: pytest -x --no-header`).
+  - `.aider.conf.yml` — Path C config (TabbyAPI at `http://localhost:5000/v1`, `model: openai/Qwen3-32B-exl3`, `auto-commits: true`, `auto-test: true`, `test-cmd: pytest -x --no-header`).
   - `.aiderignore` — `.env`, `.env.*`, `secrets/`, `**/credentials.*`, `**/api_keys.*`.
   - `.gitignore` — Python artifacts + `PLAN.md`, `TESTS.md`, `.aider.tags.cache.v3/`.
   - `plans/README.md` — short description: this directory archives completed PLAN.md files, named like `YYYY-MM-feature-name.md`.
