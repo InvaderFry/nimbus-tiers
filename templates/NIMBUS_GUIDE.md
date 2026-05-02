@@ -20,9 +20,11 @@ claude            # paste the Phase 1 starter prompt below, then iterate
 
 # Phase 2 — execute in Aider against local model
 aider --read PLAN.md --read TESTS.md --read CONTEXT.md
+# paste the Phase 2 starter prompt below at the > prompt
 
-# Phase 3 — review in Claude Code
-claude            # run the review prompt from CLAUDE.md against the diff
+# Phase 3 — find the base commit, then open Claude Code
+git log --oneline   # copy the hash of the last commit before execution started
+claude              # paste the Phase 3 starter prompt below, filling in that hash
 
 # Final gate — run VERIFY.md before merge
 ```
@@ -49,6 +51,47 @@ edge cases, and tests.
 
 Write the plan to PLAN.md and the acceptance tests to TESTS.md. If new
 invariants or do-not-touch areas emerge, append them to CONTEXT.md.
+```
+
+### Phase 2 starter prompt
+
+Paste this at the Aider `>` prompt after startup.
+
+```
+Execute the plan in PLAN.md step by step, starting with step 1.
+Before editing any file, add it to the chat with /add <path>.
+Make one commit per step using the step number as the commit message prefix (e.g. "Step 1: ...").
+Do not skip steps or combine them.
+```
+
+### Phase 3 starter prompt
+
+First get the base commit hash (the last commit **before** Aider started):
+
+```bash
+git log --oneline
+```
+
+Then paste this as your first message in a new Claude Code session, filling in the hash:
+
+```
+We are in Phase 3 (review only). Do not write any code.
+
+Base commit: [paste hash here]
+
+Review the diff from that commit to HEAD against PLAN.md, TESTS.md, and CONTEXT.md.
+
+Check for:
+1. Did each step get implemented as specified in PLAN.md?
+2. Are all tests from TESTS.md present and passing?
+3. Were all invariants and constraints in CONTEXT.md respected?
+4. Bugs, edge cases, security issues
+5. Style/consistency with the rest of the codebase
+6. Performance regressions
+7. Any deviations from the plan that need justification
+
+Produce a numbered list of required fixes ordered by severity. If nothing needs
+fixing, say APPROVED and provide a one-paragraph commit-message summary.
 ```
 
 ## Repo files
