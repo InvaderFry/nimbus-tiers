@@ -42,10 +42,12 @@ For each step, specify:
 Be specific enough that a less capable engineer (the local executor) could
 execute each step without re-reading the codebase.
 
-Also produce:
-- TESTS.md listing what tests should exist when this is complete.
-- Update CONTEXT.md with any new invariants, public contracts, or do-not-touch
-  areas surfaced during planning.
+When done:
+- Write the full plan to PLAN.md (create or overwrite).
+- Write acceptance tests to TESTS.md (create or overwrite).
+- If new invariants, public contracts, or do-not-touch areas surfaced, append
+  them to CONTEXT.md.
+- Do not write any implementation code in this session.
 ```
 
 ## Review-mode prompt template

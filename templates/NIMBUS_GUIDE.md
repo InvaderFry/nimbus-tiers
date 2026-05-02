@@ -16,7 +16,7 @@ See [`docs/architecture.md`](./docs/architecture.md) for the full reference.
 
 ```bash
 # Phase 1 — plan in Claude Code
-claude            # write PLAN.md, TESTS.md, refine CONTEXT.md
+claude            # paste the Phase 1 starter prompt below, then iterate
 
 # Phase 2 — execute in Aider against local model
 aider --read PLAN.md --read TESTS.md --read CONTEXT.md
@@ -25,6 +25,30 @@ aider --read PLAN.md --read TESTS.md --read CONTEXT.md
 claude            # run the review prompt from CLAUDE.md against the diff
 
 # Final gate — run VERIFY.md before merge
+```
+
+### Phase 1 starter prompt
+
+Copy this as your **first message** when opening a new Claude Code session for planning. Fill in the bracketed parts.
+
+```
+We are in Phase 1 (planning only). Do not write any implementation code.
+
+Feature: [one-sentence description of what we're building or fixing]
+
+Relevant files to read first:
+- [path/to/file1] — [why it matters]
+- [path/to/file2] — [why it matters]
+
+Read CONTEXT.md and VERIFY.md for existing invariants and the definition of done.
+
+Then produce a numbered implementation plan specific enough that a less
+capable model can execute each step without re-reading the codebase. For
+each step include: file(s) to change, what to change, what it accomplishes,
+edge cases, and tests.
+
+Write the plan to PLAN.md and the acceptance tests to TESTS.md. If new
+invariants or do-not-touch areas emerge, append them to CONTEXT.md.
 ```
 
 ## Repo files
