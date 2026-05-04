@@ -98,12 +98,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stack",
         choices=sorted(STACK_TEST_COMMANDS.keys()),
-        default="python",
+        default="java-maven",
         help=(
             "Project technology stack. Sets the Aider auto-test command in "
             ".aider.conf.yml. Choices: "
             + ", ".join(f"{k} ({v!r})" for k, v in sorted(STACK_TEST_COMMANDS.items()))
-            + ". Defaults to 'python'."
+            + ". Defaults to 'java-maven'."
         ),
     )
     mode_group = parser.add_mutually_exclusive_group()

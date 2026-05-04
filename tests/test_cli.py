@@ -91,7 +91,7 @@ def test_cli_writes_correct_test_cmd_for_stack(
     assert f"test-cmd: {expected_cmd}" in aider_conf
 
 
-def test_cli_default_stack_is_python(
+def test_cli_default_stack_is_java_maven(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_dir = tmp_path / "proj"
@@ -104,4 +104,4 @@ def test_cli_default_stack_is_python(
 
     assert rc == 0
     aider_conf = (project_dir / ".aider.conf.yml").read_text()
-    assert "test-cmd: pytest -x --no-header" in aider_conf
+    assert "test-cmd: ./mvnw test" in aider_conf
