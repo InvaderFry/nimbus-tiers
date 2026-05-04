@@ -15,7 +15,7 @@ openai-api-key: notneeded
 # diffs before they hit git history.
 auto-commits: true
 auto-test: true
-test-cmd: pytest -x --no-header
+test-cmd: {{TEST_CMD}}
 
 # Read-only files that should always be in context for any session.
 # Per-feature PLAN.md and TESTS.md are added on the command line, not here.

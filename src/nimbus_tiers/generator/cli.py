@@ -25,6 +25,13 @@ PATH_REGISTRY: Mapping[str, type[SetupPath]] = {
     "light-local": LightLocalPath,
 }
 
+STACK_TEST_COMMANDS: Mapping[str, str] = {
+    "python": "pytest -x --no-header",
+    "java-maven": "./mvnw test",
+    "java-gradle": "./gradlew test",
+    "node": "npm test",
+}
+
 
 def _repo_root() -> Path:
     """Return the nimbus-tiers repo root (two levels up from this file)."""
@@ -88,6 +95,17 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default="full-hybrid",
         help="Setup path. Currently only 'full-hybrid' is implemented.",
     )
+    parser.add_argument(
+        "--stack",
+        choices=sorted(STACK_TEST_COMMANDS.keys()),
+        default="java-maven",
+        help=(
+            "Project technology stack. Sets the Aider auto-test command in "
+            ".aider.conf.yml. Choices: "
+            + ", ".join(f"{k} ({v!r})" for k, v in sorted(STACK_TEST_COMMANDS.items()))
+            + ". Defaults to 'java-maven'."
+        ),
+    )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
         "--force",
@@ -135,12 +153,15 @@ def main(argv: list[str] | None = None) -> int:
         templates_root=templates_root,
     )
 
+    test_cmd = STACK_TEST_COMMANDS[args.stack]
+
     print(f"Generating {args.path_type} project '{project_name}' at {project_path}")
     print(f"Templates root: {templates_root}")
+    print(f"Stack: {args.stack} (test-cmd: {test_cmd!r})")
     print()
 
     try:
-        report = generator.generate(project_name, project_path)
+        report = generator.generate(project_name, project_path, substitutions={"TEST_CMD": test_cmd})
     except NotImplementedError as exc:
         raise SystemExit(str(exc))
 

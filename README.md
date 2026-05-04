@@ -44,6 +44,29 @@ python3 generateNewProject.py my-app
 
 Replace `my-app` with your actual project name (letters, numbers, dashes, underscores).
 
+Use `--stack` to tell the generator which tech stack you're targeting. This sets the `test-cmd` in `.aider.conf.yml` so Aider runs the right test command automatically:
+
+| `--stack` | Aider `test-cmd` |
+|---|---|
+| `java-maven` *(default)* | `./mvnw test` |
+| `java-gradle` | `./gradlew test` |
+| `node` | `npm test` |
+| `python` | `pytest -x --no-header` |
+
+```bash
+# Java Spring Boot (Maven) — default, no flag needed
+python3 generateNewProject.py my-app
+
+# Java Spring Boot (Gradle)
+python3 generateNewProject.py my-app --stack java-gradle
+
+# Node.js
+python3 generateNewProject.py my-app --stack node
+
+# Python
+python3 generateNewProject.py my-app --stack python
+```
+
 **Step 4 — cd into your new project**
 
 ```bash
@@ -102,6 +125,7 @@ The two top-level scripts (`generateNewProject.py`, `setupEnvironment.py`) are s
 
 ```bash
 # 1. scaffold a new project (creates ../my-app and git-inits it)
+# Default stack is java-maven; pass --stack python/java-gradle/node to override
 python3 generateNewProject.py my-app
 
 # 2. (optional) bring up the Path C runtime stack on this machine
