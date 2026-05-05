@@ -51,6 +51,19 @@ def _select_mode(args: argparse.Namespace) -> WriteMode:
     return WriteMode.SKIP
 
 
+def _derive_package_name(project_name: str) -> str:
+    """my-app -> myapp  (lowercase alphanumeric; prefix 'app' if starts with digit)."""
+    pkg = re.sub(r"[^a-z0-9]", "", project_name.lower()) or "app"
+    return ("app" + pkg) if pkg[0].isdigit() else pkg
+
+
+def _derive_class_name(project_name: str) -> str:
+    """my-app -> MyApp  (PascalCase from dash/underscore-separated words)."""
+    parts = re.split(r"[-_]+", project_name)
+    cls = "".join(p.capitalize() for p in parts if p)
+    return ("App" + cls) if (cls and cls[0].isdigit()) else (cls or "App")
+
+
 def _validate_project_name(name: str) -> str:
     if not PROJECT_NAME_RE.match(name):
         raise SystemExit(
@@ -139,8 +152,18 @@ def main(argv: list[str] | None = None) -> int:
             f"Refusing to generate into the template repo itself ({project_path})."
         )
 
-    setup_cls = PATH_REGISTRY[args.path_type]
-    setup_path = setup_cls()
+    package_name = _derive_package_name(project_name)
+    class_name = _derive_class_name(project_name)
+    test_cmd = STACK_TEST_COMMANDS[args.stack]
+
+    if args.path_type == "full-hybrid":
+        setup_path = FullHybridPath(
+            stack=args.stack,
+            package_name=package_name,
+            class_name=class_name,
+        )
+    else:
+        setup_path = PATH_REGISTRY[args.path_type]()
 
     file_writer = FileWriter(mode=_select_mode(args))
     git_initializer = GitInitializer()
@@ -153,15 +176,21 @@ def main(argv: list[str] | None = None) -> int:
         templates_root=templates_root,
     )
 
-    test_cmd = STACK_TEST_COMMANDS[args.stack]
-
     print(f"Generating {args.path_type} project '{project_name}' at {project_path}")
     print(f"Templates root: {templates_root}")
     print(f"Stack: {args.stack} (test-cmd: {test_cmd!r})")
     print()
 
     try:
-        report = generator.generate(project_name, project_path, substitutions={"TEST_CMD": test_cmd})
+        report = generator.generate(
+            project_name,
+            project_path,
+            substitutions={
+                "TEST_CMD": test_cmd,
+                "PACKAGE_NAME": package_name,
+                "CLASS_NAME": class_name,
+            },
+        )
     except NotImplementedError as exc:
         raise SystemExit(str(exc))
 

@@ -36,14 +36,42 @@ def test_full_hybrid_template_files_includes_core_artifacts() -> None:
     assert expected.issubset(dests)
 
 
+@pytest.mark.parametrize("stack,expected_dest", [
+    ("java-maven", "pom.xml"),
+    ("java-maven", "mvnw"),
+    ("java-maven", "src/main/resources/application.properties"),
+    ("java-gradle", "build.gradle"),
+    ("java-gradle", "settings.gradle"),
+    ("java-gradle", "gradlew"),
+    ("python", "main.py"),
+    ("python", "requirements.txt"),
+    ("python", "tests/test_main.py"),
+    ("node", "package.json"),
+    ("node", "index.js"),
+    ("node", "index.test.js"),
+])
+def test_full_hybrid_includes_stack_file(stack: str, expected_dest: str) -> None:
+    dests = {str(s.dest_relative) for s in FullHybridPath(stack=stack).template_files()}
+    assert expected_dest in dests
+
+
+def test_full_hybrid_java_maven_application_dest_uses_package_name() -> None:
+    specs = FullHybridPath(stack="java-maven", package_name="myapp").template_files()
+    dests = {str(s.dest_relative) for s in specs}
+    assert "src/main/java/com/example/myapp/Application.java" in dests
+    assert "src/test/java/com/example/myapp/ApplicationTest.java" in dests
+
+
 def test_full_hybrid_no_duplicate_destinations() -> None:
-    FullHybridPath().validate()  # raises on duplicate
+    for stack in ("java-maven", "java-gradle", "python", "node"):
+        FullHybridPath(stack=stack).validate()
 
 
 def test_full_hybrid_every_src_exists_in_templates_root() -> None:
-    for spec in FullHybridPath().template_files():
-        full = REPO_TEMPLATES_ROOT / spec.src_relative
-        assert full.is_file(), f"missing template: {full}"
+    for stack in ("java-maven", "java-gradle", "python", "node"):
+        for spec in FullHybridPath(stack=stack).template_files():
+            full = REPO_TEMPLATES_ROOT / spec.src_relative
+            assert full.is_file(), f"missing template: {full}"
 
 
 def test_full_hybrid_no_absolute_paths() -> None:
