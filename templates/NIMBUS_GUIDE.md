@@ -134,6 +134,25 @@ Make one commit per step using the step number as the commit message prefix (e.g
 Do not skip steps or combine them.
 ```
 
+#### Example: one step at a time (recommended)
+
+Instead of pasting a prompt interactively, run Aider non-interactively once per step. Re-run the same command until all steps are done — it picks up where it left off each time via `CompletedSteps.md`.
+
+```bash
+aider --read PLAN.md --read TESTS.md --read CONTEXT.md CompletedSteps.md --yes \
+  -m "Read CompletedSteps.md to find the first step not listed as DONE. \
+If the file does not exist, create it with the header '# Completed Steps'. \
+Implement exactly that one step from PLAN.md — no more. \
+Only mark the step done after tests pass. \
+Append a line to CompletedSteps.md in this exact format: 'Step N: DONE — <one-line summary>'. \
+Then commit all changed files with the message 'Step N: <one-line summary>'."
+```
+
+- `CompletedSteps.md` is passed as an editable file (not `--read`) so Aider can write to it.
+- `--yes` auto-confirms file prompts so the run never hangs waiting for input.
+- Tests must pass before the step is marked done.
+- Each run produces exactly one commit; re-run until all steps show DONE.
+
 ### Phase 3 starter prompt
 
 First get the base commit hash (the last commit **before** Aider started):
