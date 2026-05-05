@@ -20,7 +20,7 @@ from nimbus_tiers.generator.setup_path import SetupPath
 PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 PATH_REGISTRY: Mapping[str, type[SetupPath]] = {
-    "full-hybrid": FullHybridPath,
+    # full-hybrid is handled separately in main() to pass stack/package/class params
     "cloud-only": CloudOnlyPath,
     "light-local": LightLocalPath,
 }
@@ -58,7 +58,11 @@ def derive_package_name(project_name: str) -> str:
 
 
 def derive_class_name(project_name: str) -> str:
-    """my-app -> MyApp  (PascalCase from dash/underscore-separated words)."""
+    """my-app -> MyApp  (PascalCase from dash/underscore-separated words).
+
+    Note: capitalize() lowercases the tail of each word, so already-mixed-case
+    input like 'weatherAPI' produces 'Weatherapi', not 'WeatherAPI'.
+    """
     parts = re.split(r"[-_]+", project_name)
     cls = "".join(p.capitalize() for p in parts if p)
     return ("App" + cls) if (cls and cls[0].isdigit()) else (cls or "App")
