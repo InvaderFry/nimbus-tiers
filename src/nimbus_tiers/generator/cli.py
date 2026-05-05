@@ -20,7 +20,9 @@ from nimbus_tiers.generator.setup_path import SetupPath
 PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 PATH_REGISTRY: Mapping[str, type[SetupPath]] = {
-    # full-hybrid is handled separately in main() to pass stack/package/class params
+    # full-hybrid is listed here so it appears in --path-type choices validation.
+    # main() constructs it directly (not via PATH_REGISTRY) to pass stack/package/class params.
+    "full-hybrid": FullHybridPath,
     "cloud-only": CloudOnlyPath,
     "light-local": LightLocalPath,
 }
