@@ -12,7 +12,7 @@
     </parent>
     <!-- TODO: change to your organisation's group ID, e.g. com.acme -->
     <groupId>com.example</groupId>
-    <artifactId>{{PROJECT_NAME}}</artifactId>
+    <artifactId>{{PACKAGE_NAME}}</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>{{PROJECT_NAME}}</name>
     <properties>
