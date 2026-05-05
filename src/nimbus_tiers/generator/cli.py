@@ -51,13 +51,13 @@ def _select_mode(args: argparse.Namespace) -> WriteMode:
     return WriteMode.SKIP
 
 
-def _derive_package_name(project_name: str) -> str:
+def derive_package_name(project_name: str) -> str:
     """my-app -> myapp  (lowercase alphanumeric; prefix 'app' if starts with digit)."""
     pkg = re.sub(r"[^a-z0-9]", "", project_name.lower()) or "app"
     return ("app" + pkg) if pkg[0].isdigit() else pkg
 
 
-def _derive_class_name(project_name: str) -> str:
+def derive_class_name(project_name: str) -> str:
     """my-app -> MyApp  (PascalCase from dash/underscore-separated words)."""
     parts = re.split(r"[-_]+", project_name)
     cls = "".join(p.capitalize() for p in parts if p)
@@ -152,8 +152,8 @@ def main(argv: list[str] | None = None) -> int:
             f"Refusing to generate into the template repo itself ({project_path})."
         )
 
-    package_name = _derive_package_name(project_name)
-    class_name = _derive_class_name(project_name)
+    package_name = derive_package_name(project_name)
+    class_name = derive_class_name(project_name)
     test_cmd = STACK_TEST_COMMANDS[args.stack]
 
     if args.path_type == "full-hybrid":

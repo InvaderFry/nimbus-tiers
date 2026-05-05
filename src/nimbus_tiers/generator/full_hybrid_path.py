@@ -7,10 +7,16 @@ section.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
+
+_SUPPORTED_STACKS = frozenset({"java-maven", "java-gradle", "python", "node"})
+
+_EXECUTABLE_SCRIPTS: dict[str, list[str]] = {
+    "java-maven": ["mvnw"],
+    "java-gradle": ["gradlew"],
+}
 
 
 class FullHybridPath(SetupPath):
@@ -45,27 +51,27 @@ class FullHybridPath(SetupPath):
         )
 
     def _stack_template_files(self) -> list[TemplateSpec]:
-        s = self.stack
+        stack = self.stack
         pkg = self.package_name
 
-        if s in ("java-maven", "java-gradle"):
+        if stack in ("java-maven", "java-gradle"):
             main_pkg = f"src/main/java/com/example/{pkg}"
             test_pkg = f"src/test/java/com/example/{pkg}"
             java_common = [
                 TemplateSpec(
-                    Path(f"stacks/{s}/Application.java"),
+                    Path(f"stacks/{stack}/Application.java"),
                     Path(f"{main_pkg}/Application.java"),
                 ),
                 TemplateSpec(
-                    Path(f"stacks/{s}/ApplicationTest.java"),
+                    Path(f"stacks/{stack}/ApplicationTest.java"),
                     Path(f"{test_pkg}/ApplicationTest.java"),
                 ),
                 TemplateSpec(
-                    Path(f"stacks/{s}/application.properties"),
+                    Path(f"stacks/{stack}/application.properties"),
                     Path("src/main/resources/application.properties"),
                 ),
             ]
-            if s == "java-maven":
+            if stack == "java-maven":
                 return java_common + [
                     TemplateSpec(Path("stacks/java-maven/pom.xml"), Path("pom.xml")),
                     TemplateSpec(Path("stacks/java-maven/mvnw"), Path("mvnw")),
@@ -77,29 +83,27 @@ class FullHybridPath(SetupPath):
                     TemplateSpec(Path("stacks/java-gradle/gradlew"), Path("gradlew")),
                 ]
 
-        if s == "python":
+        if stack == "python":
             return [
                 TemplateSpec(Path("stacks/python/main.py"), Path("main.py")),
                 TemplateSpec(Path("stacks/python/requirements.txt"), Path("requirements.txt")),
                 TemplateSpec(Path("stacks/python/test_main.py"), Path("tests/test_main.py")),
             ]
 
-        if s == "node":
+        if stack == "node":
             return [
                 TemplateSpec(Path("stacks/node/package.json"), Path("package.json")),
                 TemplateSpec(Path("stacks/node/index.js"), Path("index.js")),
                 TemplateSpec(Path("stacks/node/index.test.js"), Path("index.test.js")),
             ]
 
-        return []
+        raise ValueError(
+            f"Unsupported stack: {stack!r}. Supported stacks: {sorted(_SUPPORTED_STACKS)}"
+        )
 
     def post_copy_hooks(self, project_root: Path) -> None:
-        executables = {
-            "java-maven": ["mvnw"],
-            "java-gradle": ["gradlew"],
-        }
-        for name in executables.get(self.stack, []):
-            script = project_root / name
+        for script_name in _EXECUTABLE_SCRIPTS.get(self.stack, []):
+            script = project_root / script_name
             if script.exists():
                 script.chmod(script.stat().st_mode | 0o755)
 

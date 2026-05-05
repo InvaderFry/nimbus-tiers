@@ -112,3 +112,34 @@ def test_setup_path_post_copy_hooks_default_noop(tmp_path: Path) -> None:
             return []
 
     MinimalPath().post_copy_hooks(tmp_path)  # should not raise
+
+
+def test_full_hybrid_unknown_stack_raises() -> None:
+    with pytest.raises(ValueError, match="Unsupported stack"):
+        FullHybridPath(stack="ruby")._stack_template_files()
+
+
+@pytest.mark.parametrize("filename", ["Application.java", "ApplicationTest.java", "application.properties"])
+def test_java_maven_and_gradle_share_identical_source_templates(filename: str) -> None:
+    maven = (REPO_TEMPLATES_ROOT / "stacks" / "java-maven" / filename).read_bytes()
+    gradle = (REPO_TEMPLATES_ROOT / "stacks" / "java-gradle" / filename).read_bytes()
+    assert maven == gradle, (
+        f"stacks/java-maven/{filename} and stacks/java-gradle/{filename} have diverged. "
+        "Update both files to keep them in sync."
+    )
+
+
+@pytest.mark.parametrize("stack,script", [
+    ("java-maven", "mvnw"),
+    ("java-gradle", "gradlew"),
+])
+def test_post_copy_hooks_makes_wrapper_executable(
+    tmp_path: Path, stack: str, script: str
+) -> None:
+    (tmp_path / script).write_text("#!/bin/sh\n")
+    FullHybridPath(stack=stack).post_copy_hooks(tmp_path)
+    assert (tmp_path / script).stat().st_mode & 0o111, f"{script} should be executable"
+
+
+def test_post_copy_hooks_tolerates_missing_wrapper(tmp_path: Path) -> None:
+    FullHybridPath(stack="java-maven").post_copy_hooks(tmp_path)  # mvnw absent — should not raise

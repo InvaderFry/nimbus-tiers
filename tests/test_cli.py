@@ -10,8 +10,8 @@ import pytest
 
 from nimbus_tiers.generator.cli import (
     STACK_TEST_COMMANDS,
-    _derive_class_name,
-    _derive_package_name,
+    derive_class_name,
+    derive_package_name,
     main,
 )
 from nimbus_tiers.generator.git_initializer import GitInitializer
@@ -22,6 +22,14 @@ REPO_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"
 
 def _make_runner() -> MagicMock:
     return MagicMock(return_value=subprocess.CompletedProcess([], 0))
+
+
+def _patched_main(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> int:
+    monkeypatch.setattr(
+        "nimbus_tiers.generator.cli.GitInitializer",
+        lambda: GitInitializer(runner=_make_runner()),
+    )
+    return main(argv)
 
 
 # ---------------------------------------------------------------------------
@@ -78,19 +86,7 @@ def test_cli_writes_correct_test_cmd_for_stack(
     tmp_path: Path, stack: str, expected_cmd: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_dir = tmp_path / "proj"
-    monkeypatch.setattr(
-        "nimbus_tiers.generator.git_initializer.GitInitializer._git",
-        lambda self, *args, **kwargs: subprocess.CompletedProcess([], 0),
-        raising=False,
-    )
-    # Patch GitInitializer runner to avoid real git calls
-    monkeypatch.setattr(
-        "nimbus_tiers.generator.cli.GitInitializer",
-        lambda: GitInitializer(runner=_make_runner()),
-    )
-
-    rc = main(["my-proj", "--path", str(project_dir), "--stack", stack])
-
+    rc = _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", stack])
     assert rc == 0
     aider_conf = (project_dir / ".aider.conf.yml").read_text()
     assert f"test-cmd: {expected_cmd}" in aider_conf
@@ -100,13 +96,7 @@ def test_cli_default_stack_is_java_maven(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_dir = tmp_path / "proj"
-    monkeypatch.setattr(
-        "nimbus_tiers.generator.cli.GitInitializer",
-        lambda: GitInitializer(runner=_make_runner()),
-    )
-
-    rc = main(["my-proj", "--path", str(project_dir)])
-
+    rc = _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir)])
     assert rc == 0
     aider_conf = (project_dir / ".aider.conf.yml").read_text()
     assert "test-cmd: ./mvnw test" in aider_conf
@@ -125,7 +115,7 @@ def test_cli_default_stack_is_java_maven(
     ("123app", "app123app"),
 ])
 def test_derive_package_name(name: str, expected: str) -> None:
-    assert _derive_package_name(name) == expected
+    assert derive_package_name(name) == expected
 
 
 @pytest.mark.parametrize("name,expected", [
@@ -133,9 +123,10 @@ def test_derive_package_name(name: str, expected: str) -> None:
     ("my_app", "MyApp"),
     ("myapp", "Myapp"),
     ("weather-service", "WeatherService"),
+    ("123proj", "App123proj"),
 ])
 def test_derive_class_name(name: str, expected: str) -> None:
-    assert _derive_class_name(name) == expected
+    assert derive_class_name(name) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -160,13 +151,7 @@ def test_cli_generates_hello_world_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_dir = tmp_path / "proj"
-    monkeypatch.setattr(
-        "nimbus_tiers.generator.cli.GitInitializer",
-        lambda: GitInitializer(runner=_make_runner()),
-    )
-
-    rc = main(["my-proj", "--path", str(project_dir), "--stack", stack])
-
+    rc = _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", stack])
     assert rc == 0
     for rel in expected_files:
         assert (project_dir / rel).is_file(), f"missing: {rel}"
@@ -176,13 +161,7 @@ def test_cli_substitutes_package_and_class_in_java_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_dir = tmp_path / "proj"
-    monkeypatch.setattr(
-        "nimbus_tiers.generator.cli.GitInitializer",
-        lambda: GitInitializer(runner=_make_runner()),
-    )
-
-    main(["my-proj", "--path", str(project_dir), "--stack", "java-maven"])
-
+    _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "java-maven"])
     src = (project_dir / "src/main/java/com/example/myproj/Application.java").read_text()
     assert "package com.example.myproj;" in src
     assert "class MyProjApplication" in src

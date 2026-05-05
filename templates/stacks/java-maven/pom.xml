@@ -6,9 +6,11 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
+        <!-- Check https://spring.io/projects/spring-boot for the latest release -->
         <version>3.3.0</version>
         <relativePath/>
     </parent>
+    <!-- TODO: change to your organisation's group ID, e.g. com.acme -->
     <groupId>com.example</groupId>
     <artifactId>{{PROJECT_NAME}}</artifactId>
     <version>0.0.1-SNAPSHOT</version>
