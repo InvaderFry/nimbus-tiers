@@ -32,10 +32,14 @@ if [ ! -f "$STEP_FILE" ]; then
     if [ -f "PLAN.md" ]; then
         BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's|.*/||' || echo "plan")
         ARCHIVE="plans/$(date +%Y-%m)-${BRANCH}.md"
+
+        echo "Removing per-step files from plans/"
+        git rm -f plans/step*.md 2>/dev/null || true
+
         echo "Archiving PLAN.md to $ARCHIVE"
         cp PLAN.md "$ARCHIVE"
         git add "$ARCHIVE"
-        git commit -m "Archive PLAN.md to $ARCHIVE"
+        git commit -m "Archive PLAN.md to $ARCHIVE; remove per-step files"
     fi
 
     exit 0
