@@ -57,14 +57,15 @@ class FullHybridPath(SetupPath):
         if stack in ("java-maven", "java-gradle"):
             main_pkg = f"src/main/java/com/example/{pkg}"
             test_pkg = f"src/test/java/com/example/{pkg}"
+            cls = self.class_name
             java_common = [
                 TemplateSpec(
                     Path(f"stacks/{stack}/Application.java"),
-                    Path(f"{main_pkg}/Application.java"),
+                    Path(f"{main_pkg}/{cls}Application.java"),
                 ),
                 TemplateSpec(
                     Path(f"stacks/{stack}/ApplicationTest.java"),
-                    Path(f"{test_pkg}/ApplicationTest.java"),
+                    Path(f"{test_pkg}/{cls}ApplicationTest.java"),
                 ),
                 TemplateSpec(
                     Path(f"stacks/{stack}/application.properties"),
