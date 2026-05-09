@@ -14,8 +14,10 @@ from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
 _SUPPORTED_STACKS = frozenset({"java-maven", "java-gradle", "python", "node"})
 
 _EXECUTABLE_SCRIPTS: dict[str, list[str]] = {
-    "java-maven": ["mvnw"],
-    "java-gradle": ["gradlew"],
+    "java-maven": ["mvnw", "phase2.sh"],
+    "java-gradle": ["gradlew", "phase2.sh"],
+    "python": ["phase2.sh"],
+    "node": ["phase2.sh"],
 }
 
 
@@ -38,6 +40,7 @@ class FullHybridPath(SetupPath):
             ("VERIFY.md", "VERIFY.md"),
             ("CLAUDE.md", "CLAUDE.md"),
             ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
+            ("phase2.sh", "phase2.sh"),
             (".aider.conf.yml", ".aider.conf.yml"),
             (".aiderignore", ".aiderignore"),
             (".gitignore", ".gitignore"),

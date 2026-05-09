@@ -6,7 +6,7 @@ Scaffolded from the [nimbus-tiers](https://github.com/invaderfry/nimbus-tiers) t
 
 | Phase | Tool | Output |
 |---|---|---|
-| 1. Plan | Claude Code (frontier) | `PLAN.md`, `TESTS.md`, updated `CONTEXT.md` |
+| 1. Plan | Claude Code (frontier) | `PLAN.md`, `TESTS.md`, `plans/step01.md` … `stepNN.md`, updated `CONTEXT.md` |
 | 2. Execute | Aider + local Qwen3-32B (TabbyAPI) | Series of git commits, one per step |
 | 3. Review | Claude Code (frontier) | Fix list or `APPROVED` |
 
@@ -18,9 +18,8 @@ See [`docs/architecture.md`](./docs/architecture.md) for the full reference.
 # Phase 1 — plan in Claude Code
 claude            # paste the Phase 1 starter prompt below, then iterate
 
-# Phase 2 — execute in Aider against local model
-aider --read PLAN.md --read TESTS.md --read CONTEXT.md
-# paste the Phase 2 starter prompt below at the > prompt
+# Phase 2 — execute steps one at a time
+./phase2.sh   # re-run until all steps show DONE
 
 # Phase 3 — find the base commit, then open Claude Code
 git log --oneline   # copy the hash of the last commit before execution started
@@ -42,6 +41,7 @@ Only create or replace:
 - TESTS.md
 - VERIFY.md
 - verify.sh
+- plans/step01.md, step02.md, ... (one per step)
 
 FEATURE:
 [Describe feature.]
@@ -96,6 +96,13 @@ Create:
 - Do not run manual/live-network checks unless explicitly required.
 - Make executable if possible.
 
+5. plans/step01.md, step02.md, ... (one file per PLAN.md step)
+- Each file covers exactly one step: file(s) to change, what to do, edge cases, and acceptance tests for that step only.
+- Must be self-contained — the executor reads only this file plus CONTEXT.md.
+- Keep each file under ~400 tokens (roughly 300 words). The local model has a 10K token context window.
+- Number files with zero-padded two digits: step01.md, step02.md, ..., step10.md, etc.
+- PLAN.md and TESTS.md are for humans and Phase 3 review — the executor never reads them.
+
 IMPORTANT:
 Do not create implementation source files.
 Do not add dependencies unless explicitly allowed.
@@ -114,6 +121,7 @@ Only create or replace:
 - TESTS.md
 - VERIFY.md
 - verify.sh
+- plans/step01.md, step02.md, ... (one per step)
 
 FEATURE:
 Create a Java Spring Boot application that fetches the
@@ -190,6 +198,13 @@ Create:
 - Do not run manual/live-network checks unless explicitly required.
 - Make executable if possible.
 
+5. plans/step01.md, step02.md, ... (one file per PLAN.md step)
+- Each file covers exactly one step: file(s) to change, what to do, edge cases, and acceptance tests for that step only.
+- Must be self-contained — the executor reads only this file plus CONTEXT.md.
+- Keep each file under ~400 tokens (roughly 300 words). The local model has a 10K token context window.
+- Number files with zero-padded two digits: step01.md, step02.md, ..., step10.md, etc.
+- PLAN.md and TESTS.md are for humans and Phase 3 review — the executor never reads them.
+
 IMPORTANT:
 Do not create implementation source files.
 Do not add dependencies unless explicitly allowed.
@@ -197,47 +212,34 @@ Do not create CompletedSteps.md.
 Do not mark any implementation step DONE.
 ```
 
-### Phase 2 starter prompt
+### Phase 2: running the executor
 
-Paste this at the Aider `>` prompt after startup.
+#### Recommended: `./phase2.sh`
 
-```
-Execute the plan in PLAN.md step by step, starting with step 1.
-Before editing any file, add it to the chat with /add <path>.
-Make one commit per step using the step number as the commit message prefix (e.g. "Step 1: ...").
-Do not skip steps or combine them.
-```
-
-#### Example: one step at a time (recommended)
-
-Instead of pasting a prompt interactively, run Aider non-interactively once per step. Re-run the same command until all steps are done — it picks up where it left off each time via `CompletedSteps.md`.
+Run the wrapper script from your project root. Re-run it until all steps show DONE:
 
 ```bash
-aider \
-  --no-auto-commits \
-  --read PLAN.md \
-  --read TESTS.md \
-  --read CONTEXT.md \
-  --read VERIFY.md \
-  --test-cmd "./verify.sh" \
-  --auto-test \
-  CompletedSteps.md \
-  --yes \
-  -m "Read CompletedSteps.md to find the first step from PLAN.md not listed as DONE. \
-If CompletedSteps.md does not exist, create it with the header '# Completed Steps'. \
-Implement exactly that one step from PLAN.md — no more. \
-Do not refactor unrelated code, do not implement later steps, and do not change behavior outside the current step unless required for that step. \
-Use PLAN.md, TESTS.md, VERIFY.md, and CONTEXT.md as the source of truth. \
-Run the configured test command: ./verify.sh. \
-If ./verify.sh fails, stop immediately. Do not update CompletedSteps.md. Do not commit. \
-Only if ./verify.sh exits with status 0, append a line to CompletedSteps.md in this exact format: 'Step N: DONE — <one-line summary>'. \
-Then run: git add -A && git commit -m 'Step N: <one-line summary>'."
+./phase2.sh
 ```
 
+What it does each run:
+
+1. Reads `CompletedSteps.md` to find the next step number `N`.
+2. Loads `plans/stepNN.md` — only that step, nothing else.
+3. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window.
+4. Runs `./verify.sh` automatically after edits.
+5. On success: appends `Step N: DONE — <summary>` to `CompletedSteps.md` and commits.
+6. On failure: stops without touching `CompletedSteps.md` or git history.
+7. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
+
+Notes:
 - `CompletedSteps.md` is passed as an editable file (not `--read`) so Aider can write to it.
-- `--yes` auto-confirms file prompts so the run never hangs waiting for input.
-- Tests must pass before the step is marked done.
-- Each run produces exactly one commit; re-run until all steps show DONE.
+- `--yes` auto-confirms file prompts so the run never hangs.
+- Each run produces exactly one commit.
+
+#### Alternative: running a step manually
+
+If you want to run a step by hand, open `phase2.sh` — the flags and `-m` prompt in that file are the exact instructions the executor receives. Copy and adapt as needed rather than constructing the command from scratch.
 
 ### Phase 3 starter prompt
 
@@ -274,14 +276,17 @@ fixing, say APPROVED and provide a one-paragraph commit-message summary.
 | File | Purpose |
 |---|---|
 | `CLAUDE.md` | Project memory for Claude Code (committed). |
-| `CONTEXT.md` | Invariants, public contracts, do-not-touch areas (committed). |
-| `VERIFY.md` | Repo-level definition of "done" (committed). |
-| `PLAN.md` | Per-feature execution contract (gitignored). |
-| `TESTS.md` | Per-feature acceptance tests (gitignored). |
-| `plans/` | Archive of completed PLAN.md files for reference. |
+| `CONTEXT.md` | Invariants, public contracts, do-not-touch areas (committed, always loaded by Aider). |
+| `VERIFY.md` | Repo-level definition of "done" (committed, Phase 3 reference — not loaded by executor). |
+| `PLAN.md` | Per-feature human-readable overview (gitignored, Phase 3 reference — not loaded by executor). |
+| `TESTS.md` | Per-feature acceptance test checklist (gitignored, Phase 3 reference — not loaded by executor). |
+| `plans/step01.md` … | Per-step executor files generated by Phase 1. Each covers one step only. Loaded one at a time by `phase2.sh`. |
+| `plans/YYYY-MM-*.md` | Archive of completed feature plans. Archived automatically by `phase2.sh` when all steps complete. |
+| `phase2.sh` | Executor wrapper: finds next step, runs Aider, commits on success. |
+| `CompletedSteps.md` | Step completion log written by Aider. Tracks which steps are DONE. |
 | `logs/ai-routing.csv` | Lightweight metrics log of where work was routed. |
 | `docs/architecture.md` | Full architecture reference. |
-| `.aider.conf.yml` | Aider config (Path C defaults: local TabbyAPI). |
+| `.aider.conf.yml` | Aider config (Path C defaults: local TabbyAPI, `map-tokens: 0`, `edit-format: diff`). |
 | `.aiderignore` | Files Aider must not read (secrets, env, credentials). |
 
 ## Quota budget (rough estimates)

@@ -75,21 +75,23 @@ cd ../my-app
 
 **Step 5 — Phase 1: Plan (Claude Code)**
 
-Open Claude Code and use it to write `PLAN.md` and `TESTS.md`, and to refine the `CONTEXT.md` that was scaffolded for you.
+Open Claude Code and use it to write `PLAN.md`, `TESTS.md`, per-step files in `plans/`, and to refine the `CONTEXT.md` that was scaffolded for you.
 
 ```bash
 claude
 ```
 
-Inside the session, ask Claude to read `CONTEXT.md`, produce a `PLAN.md` with a clear task breakdown, and write `TESTS.md` with acceptance criteria.
+Use the Phase 1 starter prompt in `NIMBUS_GUIDE.md`. Claude will write `plans/step01.md`, `step02.md`, etc. — one file per step, sized to fit within the local model's 10K token context window.
 
 **Step 6 — Phase 2: Execute (Aider)**
 
-Hand the plan to Aider. It reads your plan and context as reference files and writes the actual code.
+Run the executor wrapper. Re-run it until all steps show DONE:
 
 ```bash
-aider --read PLAN.md --read TESTS.md --read CONTEXT.md
+./phase2.sh
 ```
+
+Each run loads one step file, runs `./verify.sh`, commits on success, and stops. Token usage stays well within the local model's context window because only one step file is loaded at a time.
 
 **Step 7 — Phase 3: Review (Claude Code)**
 
@@ -133,8 +135,8 @@ python3 setupEnvironment.py --check-only
 
 # 3. cd into the new project and start the Plan → Execute → Review flow
 cd ../my-app
-claude          # Phase 1: write PLAN.md, TESTS.md, refine CONTEXT.md
-aider --read PLAN.md --read TESTS.md --read CONTEXT.md   # Phase 2
+claude          # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine CONTEXT.md
+./phase2.sh     # Phase 2: re-run until all steps DONE (one commit per step)
 claude /review  # Phase 3
 ```
 

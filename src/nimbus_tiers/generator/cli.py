@@ -210,9 +210,9 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("Next steps:")
         print(f"  cd {project_path}")
-        print("  claude            # Phase 1: write PLAN.md and TESTS.md, refine CONTEXT.md")
-        print("  aider --read PLAN.md --read TESTS.md --read CONTEXT.md   # Phase 2")
-        print("  claude            # Phase 3: review the diff against PLAN.md")
+        print("  claude            # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine CONTEXT.md")
+        print("  ./phase2.sh       # Phase 2: re-run until all steps DONE (one commit per step)")
+        print("  claude /review    # Phase 3: review the diff against PLAN.md")
 
     return 0
 
