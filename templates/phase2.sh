@@ -60,13 +60,22 @@ aider \
   --read CONTEXT.md \
   --test-cmd "./verify.sh" \
   --auto-test \
-  CompletedSteps.md \
   --yes \
-  -m "Read CompletedSteps.md (create with '# Completed Steps' if missing). \
-Implement exactly the step described in $STEP_FILE — nothing more. \
+  -m "Implement exactly the step described in $STEP_FILE — nothing more. \
 Do not touch files not listed in that step. Do not refactor unrelated code. \
 Use CONTEXT.md for project invariants and do-not-change areas. \
-Run ./verify.sh. If it fails, stop — do not update CompletedSteps.md and do not commit. \
-If ./verify.sh exits 0, append to CompletedSteps.md: 'Step $NEXT: DONE — <one-line summary>'. \
-Then run: git add -A && git commit -m 'Step $NEXT: <one-line summary>'."
+Run ./verify.sh to verify your changes. If it fails, fix and retry — do not stop until it passes."
+
+# Shell owns bookkeeping — runs after aider exits, independently of whether aider's
+# internal summarization completed. Prevents lost progress on aider crashes post-verification.
+if ./verify.sh; then
+    [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
+    echo "Step $NEXT: DONE" >> CompletedSteps.md
+    git add -A
+    git commit -m "Step $NEXT: complete"
+    echo "==> Step $NEXT committed."
+else
+    echo "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
+    exit 1
+fi
 
