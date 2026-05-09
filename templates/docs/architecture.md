@@ -1178,7 +1178,21 @@ This is genuinely useful for the 10-20% of work where compliance matters. The ar
 - If task truly needs long context, escalate to Tier 3 instead
 - If all Groq models are exhausted for the day, stop starting new Groq tasks — do not chase limits across models hoping one has headroom
 
-### Failure 8: The Local Stack Stops Working
+### Failure 8: Aider Crashes After Verification, Before Bookkeeping
+
+**Symptom:** `./verify.sh` passed during a run, but `CompletedSteps.md` shows no entry for that step. The next `./phase2.sh` run re-executes the same step against already-modified files.
+
+**Cause:** Aider completed the edits, `./verify.sh` exited 0, but Aider then crashed (typically during its internal summarization step) before it could append to `CompletedSteps.md` and commit. The error output will show an Aider exception rather than a project build failure.
+
+**Mitigation:** `phase2.sh` is designed to own all bookkeeping itself. After Aider exits, the script re-runs `./verify.sh`; on success it writes to `CompletedSteps.md` and commits — Aider never touches either. If you see this failure on an older copy of `phase2.sh`, upgrade it from the template.
+
+**If you hit it on an existing repo:**
+
+1. Check `git diff HEAD~1` — if the Step N edits are already committed, `CompletedSteps.md` just needs a manual entry.
+2. If the edits are present but uncommitted, run `./verify.sh`, then manually append `Step N: DONE` to `CompletedSteps.md`, then `git add -A && git commit -m "Step N: complete"`.
+3. Re-run `./phase2.sh` — it will now advance to Step N+1.
+
+### Failure 9: The Local Stack Stops Working
 
 **Symptom:** TabbyAPI won't start, model load fails, gibberish output on Blackwell.
 
