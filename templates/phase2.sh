@@ -24,9 +24,20 @@ STEP_FILE="plans/step$(printf '%02d' "$NEXT").md"
 if [ ! -f "$STEP_FILE" ]; then
     if [ "$NEXT" -eq 1 ]; then
         echo "No step files found. Run Phase 1 first to generate plans/step01.md"
-    else
-        echo "All steps complete — no step file found at $STEP_FILE"
+        exit 0
     fi
+
+    echo "All steps complete."
+
+    if [ -f "PLAN.md" ]; then
+        BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's|.*/||' || echo "plan")
+        ARCHIVE="plans/$(date +%Y-%m)-${BRANCH}.md"
+        echo "Archiving PLAN.md to $ARCHIVE"
+        cp PLAN.md "$ARCHIVE"
+        git add "$ARCHIVE"
+        git commit -m "Archive PLAN.md to $ARCHIVE"
+    fi
+
     exit 0
 fi
 
