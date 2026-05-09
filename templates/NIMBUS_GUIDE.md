@@ -226,7 +226,7 @@ What it does each run:
 
 1. Reads `CompletedSteps.md` to find the next step number `N`.
 2. Loads `plans/stepNN.md` — only that step, nothing else.
-3. Calls Aider with `--map-tokens 0` and `--edit-format diff` to stay within the 10K token context window.
+3. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window.
 4. Runs `./verify.sh` automatically after edits.
 5. On success: appends `Step N: DONE — <summary>` to `CompletedSteps.md` and commits.
 6. On failure: stops without touching `CompletedSteps.md` or git history.

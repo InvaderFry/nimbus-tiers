@@ -22,7 +22,11 @@ print(n)
 STEP_FILE="plans/step$(printf '%02d' "$NEXT").md"
 
 if [ ! -f "$STEP_FILE" ]; then
-    echo "All steps complete or step file not found: $STEP_FILE"
+    if [ "$NEXT" -eq 1 ]; then
+        echo "No step files found. Run Phase 1 first to generate plans/step01.md"
+    else
+        echo "All steps complete — no step file found at $STEP_FILE"
+    fi
     exit 0
 fi
 
@@ -39,6 +43,7 @@ aider \
   -m "Read CompletedSteps.md (create with '# Completed Steps' if missing). \
 Implement exactly the step described in $STEP_FILE — nothing more. \
 Do not touch files not listed in that step. Do not refactor unrelated code. \
+Use CONTEXT.md for project invariants and do-not-change areas. \
 Run ./verify.sh. If it fails, stop — do not update CompletedSteps.md and do not commit. \
 If ./verify.sh exits 0, append to CompletedSteps.md: 'Step $NEXT: DONE — <one-line summary>'. \
 Then run: git add -A && git commit -m 'Step $NEXT: <one-line summary>'."
