@@ -236,23 +236,9 @@ Notes:
 - `--yes` auto-confirms file prompts so the run never hangs.
 - Each run produces exactly one commit.
 
-#### Alternative: interactive Aider session
+#### Alternative: running a step manually
 
-If you want to run Aider interactively and paste prompts manually:
-
-```bash
-aider --read plans/step01.md --read CONTEXT.md
-```
-
-At the `>` prompt:
-
-```
-Implement the step described in plans/step01.md — nothing more.
-Do not touch files not listed in that step. Run ./verify.sh when done.
-If it passes, append 'Step 1: DONE — <summary>' to CompletedSteps.md and commit.
-```
-
-Swap to the next step file for each subsequent step.
+If you want to run a step by hand, open `phase2.sh` — the flags and `-m` prompt in that file are the exact instructions the executor receives. Copy and adapt as needed rather than constructing the command from scratch.
 
 ### Phase 3 starter prompt
 
