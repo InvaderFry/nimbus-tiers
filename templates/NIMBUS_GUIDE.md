@@ -139,8 +139,8 @@ TECH STACK:
 PROJECT STATE:
 This is the first generation of this project. The directory contains only
 nimbus-tiers scaffolding files (CONTEXT.md, VERIFY.md, CLAUDE.md,
-.aider.conf.yml, etc.). There is no src/ directory, no pom.xml, and no
-Java source. The plan must include a step to create the Spring Boot
+.aider.conf.yml, etc.). There might not be src/ directory, no pom.xml, and no
+Java source or it will be barebones. The plan must include a step to create the Spring Boot
 project structure from scratch.
 
 All content in CONTEXT.md, VERIFY.md, and CLAUDE.md is boilerplate from
