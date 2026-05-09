@@ -214,21 +214,24 @@ Instead of pasting a prompt interactively, run Aider non-interactively once per 
 
 ```bash
 aider \
+  --no-auto-commits \
   --read PLAN.md \
   --read TESTS.md \
   --read CONTEXT.md \
   --read VERIFY.md \
+  --test-cmd "./verify.sh" \
+  --auto-test \
   CompletedSteps.md \
   --yes \
-  -m "Read CompletedSteps.md to find the first step not listed as DONE. \
+  -m "Read CompletedSteps.md to find the first step from PLAN.md not listed as DONE. \
 If CompletedSteps.md does not exist, create it with the header '# Completed Steps'. \
 Implement exactly that one step from PLAN.md — no more. \
-Do not refactor unrelated code, do not implement later steps, and do not change behavior outside the current step unless required. \
-Use TESTS.md and VERIFY.md to determine how to verify the change. \
-If verification instructions are missing or ambiguous, stop without marking the step done. \
-Only mark the step done after tests pass. \
-Append a line to CompletedSteps.md in this exact format: 'Step N: DONE — <one-line summary>'. \
-Then commit all changed files with the message 'Step N: <one-line summary>'."
+Do not refactor unrelated code, do not implement later steps, and do not change behavior outside the current step unless required for that step. \
+Use PLAN.md, TESTS.md, VERIFY.md, and CONTEXT.md as the source of truth. \
+Run the configured test command: ./verify.sh. \
+If ./verify.sh fails, stop immediately. Do not update CompletedSteps.md. Do not commit. \
+Only if ./verify.sh exits with status 0, append a line to CompletedSteps.md in this exact format: 'Step N: DONE — <one-line summary>'. \
+Then run: git add -A && git commit -m 'Step N: <one-line summary>'."
 ```
 
 - `CompletedSteps.md` is passed as an editable file (not `--read`) so Aider can write to it.
