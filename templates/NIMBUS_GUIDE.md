@@ -34,55 +34,101 @@ claude              # paste the Phase 3 starter prompt below, filling in that ha
 Copy this as your **first message** when opening a new Claude Code session for planning. Fill in the bracketed parts.
 
 ```
-We are in Phase 1 (planning only). Do not write any implementation code.
+We are in Phase 1: planning and verification design only.
 
-Feature: [one-sentence description of what we're building or fixing]
+Do not write implementation code or source files.
+Only create or replace:
+- PLAN.md
+- TESTS.md
+- VERIFY.md
+- verify.sh
 
-Relevant files to read first:
-- [path/to/file1] — [why it matters]
-- [path/to/file2] — [why it matters]
+FEATURE:
+[Describe feature.]
 
-Read CONTEXT.md and VERIFY.md for existing invariants and the definition of done.
+TECH STACK:
+[Language, framework, build/test tools, required versions.]
 
-Then produce a numbered implementation plan specific enough that a less
-capable model can execute each step without re-reading the codebase. For
-each step include: file(s) to change, what to change, what it accomplishes,
-edge cases, and tests.
+PROJECT STATE:
+[Describe what exists and what is missing.]
 
-Write the plan to PLAN.md and the acceptance tests to TESTS.md. If new
-invariants or do-not-touch areas emerge, append them to CONTEXT.md.
+OUTPUT / BEHAVIOR CONTRACT:
+[Describe exact expected behavior, outputs, files, API responses, logs, exit codes, etc.]
+
+EXTERNAL DEPENDENCIES:
+[APIs, databases, files, network, credentials, etc. Say what must be mocked in automated tests.]
+
+Create:
+
+1. PLAN.md
+- Numbered implementation steps.
+- Each step small enough for an AI coding agent to do independently.
+- Each step has a clear done condition.
+- Include setup/project-structure steps if needed.
+- Include testing steps.
+- Include final manual/end-to-end verification if needed.
+- No implementation code.
+
+2. TESTS.md
+- Automated acceptance test strategy.
+- Tests must be deterministic and avoid live network unless explicitly required.
+- Cover success path, edge cases, output formatting, side effects, and error handling.
+- Separate manual checks from automated checks.
+- No actual test source code.
+
+3. VERIFY.md
+- Project-specific verification instructions.
+- Clearly separate:
+  - Required before every AI step commit
+  - Required before merge / final review
+  - Human review required
+- Before every AI step commit, the single command must be: ./verify.sh
+- A step may only be marked DONE after ./verify.sh exits 0.
+- Do not commit if ./verify.sh fails.
+- Manual/network checks should be final-review checks, not required after every small step unless specifically relevant.
+- Mention runtime/build versions, generated artifacts not to commit, and sensitive output/logs to sanitize.
+
+4. verify.sh
+- Bash script with set -euo pipefail.
+- Safe to run from project root.
+- If the project is not initialized yet, print a clear message and exit 0.
+- Once initialized, run the project’s automated build/lint/test gate.
+- Do not run manual/live-network checks unless explicitly required.
+- Make executable if possible.
+
+IMPORTANT:
+Do not create implementation source files.
+Do not add dependencies unless explicitly allowed.
+Do not create CompletedSteps.md.
+Do not mark any implementation step DONE.
 ```
 
 #### Example
 
 ```
-We are in Phase 1 (planning only). Do not write any implementation code.
+We are in Phase 1: planning and verification design only.
 
----
+Do not write implementation code or source files.
+Only create or replace:
+- PLAN.md
+- TESTS.md
+- VERIFY.md
+- verify.sh
 
-FEATURE
+FEATURE:
 Create a Java Spring Boot application that fetches the
 current weather for Plano, Texas, prints it to the console, and writes
 the same output to weather.txt in the project root directory, overwriting
 the file on each execution. The process runs, outputs results, and exits with code 0.
 
-TECH STACK
+
+TECH STACK:
 - Java 21
 - Spring Boot
 - Maven (the project uses the Maven wrapper: ./mvnw)
 
-API
-Pick a free weather API that doesn't need an API key.
 
-OUTPUT FORMAT
-Both the console and weather.txt must show these fields, one per line:
-  Temperature:  <value> °F
-  Condition:    <description, e.g. "Partly Cloudy">
-  Humidity:     <value> %
-  Wind Speed:   <value> mph
-  Observed At:  <ISO-8601 timestamp>
-
-PROJECT STATE
+PROJECT STATE:
 This is the first generation of this project. The directory contains only
 nimbus-tiers scaffolding files (CONTEXT.md, VERIFY.md, CLAUDE.md,
 .aider.conf.yml, etc.). There is no src/ directory, no pom.xml, and no
@@ -93,9 +139,62 @@ All content in CONTEXT.md, VERIFY.md, and CLAUDE.md is boilerplate from
 the project generator. Treat every section as a template to be replaced
 with project-specific content.
 
-Write the plan to PLAN.md and the acceptance tests to TESTS.md.
 
-Do not write any implementation code in this session.
+OUTPUT / BEHAVIOR CONTRACT:
+Both the console and weather.txt must show these fields, one per line:
+  Temperature:  <value> °F
+  Condition:    <description, e.g. "Partly Cloudy">
+  Humidity:     <value> %
+  Wind Speed:   <value> mph
+  Observed At:  <ISO-8601 timestamp>
+
+
+EXTERNAL DEPENDENCIES:
+Pick a free weather API that doesn't need an API key. 
+
+Create:
+
+1. PLAN.md
+- Numbered implementation steps.
+- Each step small enough for an AI coding agent to do independently.
+- Each step has a clear done condition.
+- Include setup/project-structure steps if needed.
+- Include testing steps.
+- Include final manual/end-to-end verification if needed.
+- No implementation code.
+
+2. TESTS.md
+- Automated acceptance test strategy.
+- Tests must be deterministic and avoid live network unless explicitly required.
+- Cover success path, edge cases, output formatting, side effects, and error handling.
+- Separate manual checks from automated checks.
+- No actual test source code.
+
+3. VERIFY.md
+- Project-specific verification instructions.
+- Clearly separate:
+  - Required before every AI step commit
+  - Required before merge / final review
+  - Human review required
+- Before every AI step commit, the single command must be: ./verify.sh
+- A step may only be marked DONE after ./verify.sh exits 0.
+- Do not commit if ./verify.sh fails.
+- Manual/network checks should be final-review checks, not required after every small step unless specifically relevant.
+- Mention runtime/build versions, generated artifacts not to commit, and sensitive output/logs to sanitize.
+
+4. verify.sh
+- Bash script with set -euo pipefail.
+- Safe to run from project root.
+- If the project is not initialized yet, print a clear message and exit 0.
+- Once initialized, run the project’s automated build/lint/test gate.
+- Do not run manual/live-network checks unless explicitly required.
+- Make executable if possible.
+
+IMPORTANT:
+Do not create implementation source files.
+Do not add dependencies unless explicitly allowed.
+Do not create CompletedSteps.md.
+Do not mark any implementation step DONE.
 ```
 
 ### Phase 2 starter prompt
