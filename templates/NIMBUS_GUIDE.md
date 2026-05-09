@@ -61,14 +61,14 @@ We are in Phase 1 (planning only). Do not write any implementation code.
 ---
 
 FEATURE
-Create a Java Spring Boot CommandLineRunner application that fetches the
+Create a Java Spring Boot application that fetches the
 current weather for Plano, Texas, prints it to the console, and writes
 the same output to weather.txt in the project root directory, overwriting
 the file on each execution. The process runs, outputs results, and exits with code 0.
 
 TECH STACK
 - Java 21
-- Spring Boot 3.3.x
+- Spring Boot
 - Maven (the project uses the Maven wrapper: ./mvnw)
 
 API
@@ -93,32 +93,7 @@ All content in CONTEXT.md, VERIFY.md, and CLAUDE.md is boilerplate from
 the project generator. Treat every section as a template to be replaced
 with project-specific content.
 
----
-
-DELIVERABLES
-
-1. PLAN.md — a numbered implementation plan specific enough that a less
-   capable model can execute each step without re-reading the codebase.
-   For each step include:
-     - File(s) to create or modify
-     - Exactly what to add or change
-     - What the change accomplishes
-     - Edge cases to handle (API timeout, non-200 response, file write
-       failure, missing JSON fields)
-     - Tests to write for that step
-
-2. TESTS.md — acceptance criteria. Define what "done" looks like:
-   specific inputs, expected console output, expected weather.txt content,
-   and expected exit behavior. Include both the happy path and failure
-   cases (API unreachable, partial response).
-
-3. CONTEXT.md — replace the boilerplate with project-specific content:
-   the chosen API endpoint and parameters, the output format as an
-   invariant, and any do-not-change areas that emerge from the design.
-
-4. VERIFY.md — replace the boilerplate. The test command must be
-   ./mvnw test. Include any other checks required before a commit is
-   considered done (compile, test, checkstyle if applicable).
+Write the plan to PLAN.md and the acceptance tests to TESTS.md.
 
 Do not write any implementation code in this session.
 ```
