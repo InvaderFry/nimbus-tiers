@@ -33,13 +33,17 @@ if [ ! -f "$STEP_FILE" ]; then
         BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's|.*/||' || echo "plan")
         ARCHIVE="plans/$(date +%Y-%m)-${BRANCH}.md"
 
-        echo "Removing per-step files from plans/"
-        git rm -f plans/step*.md 2>/dev/null || true
+        if [ ! -f "$ARCHIVE" ]; then
+            echo "Removing per-step files from plans/"
+            git rm -f plans/step*.md 2>/dev/null || true
 
-        echo "Archiving PLAN.md to $ARCHIVE"
-        cp PLAN.md "$ARCHIVE"
-        git add "$ARCHIVE"
-        git commit -m "Archive PLAN.md to $ARCHIVE; remove per-step files"
+            echo "Archiving PLAN.md to $ARCHIVE"
+            cp PLAN.md "$ARCHIVE"
+            git add "$ARCHIVE"
+            git commit -m "Archive PLAN.md to $ARCHIVE; remove per-step files"
+        else
+            echo "Archive already exists at $ARCHIVE — skipping."
+        fi
     fi
 
     exit 0
@@ -62,3 +66,4 @@ Use CONTEXT.md for project invariants and do-not-change areas. \
 Run ./verify.sh. If it fails, stop — do not update CompletedSteps.md and do not commit. \
 If ./verify.sh exits 0, append to CompletedSteps.md: 'Step $NEXT: DONE — <one-line summary>'. \
 Then run: git add -A && git commit -m 'Step $NEXT: <one-line summary>'."
+

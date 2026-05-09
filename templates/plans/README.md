@@ -19,17 +19,17 @@ Keep each step file under ~400 tokens (roughly 300 words). The local model has a
 
 Run `./phase2.sh` to execute steps one at a time. It reads `CompletedSteps.md` to find the next unfinished step, loads only that step's file, and commits on success.
 
-## 2. Completed feature archive (after Phase 3)
+## 2. Completed feature archive (end of Phase 2)
 
-When a feature ships, archive the human-readable overview for future reference:
+When all steps are done, `phase2.sh` automatically archives `PLAN.md` here and removes the per-step files in a single commit. No manual step required.
 
-```bash
-cp PLAN.md plans/$(date +%Y-%m)-feature-name.md
+The archive filename is derived from the current git branch:
+
+```
+plans/YYYY-MM-<branch-name>.md
 ```
 
-### Naming convention
-
-`YYYY-MM-short-feature-name.md` — sortable, grep-able, no special characters.
+`PLAN.md` stays in the repo root so Phase 3 review can still reference it.
 
 ### Why archive
 
