@@ -230,6 +230,7 @@ What it does each run:
 4. Runs `./verify.sh` automatically after edits.
 5. On success: appends `Step N: DONE — <summary>` to `CompletedSteps.md` and commits.
 6. On failure: stops without touching `CompletedSteps.md` or git history.
+7. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
 
 Notes:
 - `CompletedSteps.md` is passed as an editable file (not `--read`) so Aider can write to it.

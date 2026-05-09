@@ -4,7 +4,7 @@
 
 ## Workflow: Plan → Execute → Review
 
-This repo uses four handoff artifacts:
+This repo uses the following handoff artifacts:
 
 - **`PLAN.md`** — human-readable feature overview (gitignored by default; for humans and Phase 3 review)
 - **`TESTS.md`** — full acceptance test checklist (gitignored by default; for Phase 3 review)
