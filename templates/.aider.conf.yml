@@ -17,8 +17,14 @@ auto-commits: true
 auto-test: true
 test-cmd: {{TEST_CMD}}
 
+# Token budget — Qwen3-32B on 16GB has a 10K token context window.
+# Disabling the repo map and using diff edits reclaims ~2K tokens per session.
+map-tokens: 0
+edit-format: diff
+
 # Read-only files that should always be in context for any session.
-# Per-feature PLAN.md and TESTS.md are added on the command line, not here.
+# CONTEXT.md is always useful. VERIFY.md is not loaded — the executor runs
+# ./verify.sh directly; it doesn't need to read the checklist prose.
+# Per-feature step files are added by phase2.sh, not here.
 read:
   - CONTEXT.md
-  - VERIFY.md
