@@ -114,10 +114,19 @@ Do not skip steps or combine them.
 Instead of pasting a prompt interactively, run Aider non-interactively once per step. Re-run the same command until all steps are done — it picks up where it left off each time via `CompletedSteps.md`.
 
 ```bash
-aider --read PLAN.md --read TESTS.md --read CONTEXT.md CompletedSteps.md --yes \
+aider \
+  --read PLAN.md \
+  --read TESTS.md \
+  --read CONTEXT.md \
+  --read VERIFY.md \
+  CompletedSteps.md \
+  --yes \
   -m "Read CompletedSteps.md to find the first step not listed as DONE. \
-If the file does not exist, create it with the header '# Completed Steps'. \
+If CompletedSteps.md does not exist, create it with the header '# Completed Steps'. \
 Implement exactly that one step from PLAN.md — no more. \
+Do not refactor unrelated code, do not implement later steps, and do not change behavior outside the current step unless required. \
+Use TESTS.md and VERIFY.md to determine how to verify the change. \
+If verification instructions are missing or ambiguous, stop without marking the step done. \
 Only mark the step done after tests pass. \
 Append a line to CompletedSteps.md in this exact format: 'Step N: DONE — <one-line summary>'. \
 Then commit all changed files with the message 'Step N: <one-line summary>'."
