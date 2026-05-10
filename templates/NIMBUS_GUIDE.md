@@ -127,6 +127,21 @@ Do not create implementation source files.
 Do not add dependencies unless explicitly allowed.
 Do not create CompletedSteps.md.
 Do not mark any implementation step DONE.
+
+GUARDRAILS FOR STEP FILES:
+
+Each plans/stepNN.md must be self-contained, but it must not hard-code assumptions that require prior steps to have been implemented exactly as planned.
+
+For every step:
+- Instruct the executor to inspect the actual current files before editing.
+- Do not include full implementation source code unless absolutely necessary.
+- Prefer behavioral requirements over paste-ready code.
+- If a framework API, import, annotation, plugin, or dependency is version-specific, include a compatibility check against pom.xml/build.gradle.
+- Provide fallback guidance when possible.
+- Do not say "use X, do not use Y" for version-sensitive APIs unless the step also tells the executor how to verify X exists.
+- Do not instruct the executor to create a file blindly. Say to create it only if missing, otherwise update/replace the existing file carefully.
+- Include a "Duplication prevention" note for new files: check whether the class/file already exists before adding content.
+- Acceptance tests must verify behavior, not just compilation.
 ```
 
 #### Example
@@ -248,6 +263,21 @@ Do not create implementation source files.
 Do not add dependencies unless explicitly allowed.
 Do not create CompletedSteps.md.
 Do not mark any implementation step DONE.
+
+GUARDRAILS FOR STEP FILES:
+
+Each plans/stepNN.md must be self-contained, but it must not hard-code assumptions that require prior steps to have been implemented exactly as planned.
+
+For every step:
+- Instruct the executor to inspect the actual current files before editing.
+- Do not include full implementation source code unless absolutely necessary.
+- Prefer behavioral requirements over paste-ready code.
+- If a framework API, import, annotation, plugin, or dependency is version-specific, include a compatibility check against pom.xml/build.gradle.
+- Provide fallback guidance when possible.
+- Do not say "use X, do not use Y" for version-sensitive APIs unless the step also tells the executor how to verify X exists.
+- Do not instruct the executor to create a file blindly. Say to create it only if missing, otherwise update/replace the existing file carefully.
+- Include a "Duplication prevention" note for new files: check whether the class/file already exists before adding content.
+- Acceptance tests must verify behavior, not just compilation.
 ```
 
 ### Phase 2: running the executor
