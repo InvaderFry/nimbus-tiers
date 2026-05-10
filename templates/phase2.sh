@@ -140,10 +140,49 @@ else
     TIMEOUT_CMD=()
 fi
 
+# ── Preflight: fail fast if the model endpoint / API key is unavailable ───────
+# Derive model from env first, then from .aider.conf.yml so the check works
+# whether the user sets AIDER_MODEL or relies on the config file.
+_PREFLIGHT_MODEL="${AIDER_MODEL:-}"
+if [ -z "$_PREFLIGHT_MODEL" ] && [ -f ".aider.conf.yml" ]; then
+    _PREFLIGHT_MODEL=$(grep -m1 '^model:' .aider.conf.yml 2>/dev/null \
+                       | sed "s/^model:[[:space:]]*//" | tr -d '"'"'" || true)
+fi
+
+if [ -n "$_PREFLIGHT_MODEL" ]; then
+    case "$_PREFLIGHT_MODEL" in
+        openai/*|gpt-*|o1*|o3*)
+            # OpenAI-compatible model: needs an API key or a local base URL.
+            if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${OPENAI_BASE_URL:-}" ]; then
+                echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires OPENAI_API_KEY or OPENAI_BASE_URL to be set. Aborting."
+                exit 1
+            fi
+            # If pointing at a local server, verify it is actually reachable before
+            # handing control to aider (which would otherwise hang on retries).
+            if [ -n "${OPENAI_BASE_URL:-}" ] && command -v curl >/dev/null 2>&1; then
+                _AUTH_HEADER=()
+                [ -n "${OPENAI_API_KEY:-}" ] && _AUTH_HEADER=(-H "Authorization: Bearer ${OPENAI_API_KEY}")
+                if ! curl -sf --max-time 5 "${OPENAI_BASE_URL%/}/models" \
+                     "${_AUTH_HEADER[@]}" -o /dev/null 2>/dev/null; then
+                    echo "==> ERROR: local model server at '${OPENAI_BASE_URL}' is not reachable. Aborting."
+                    exit 1
+                fi
+            fi
+            ;;
+        anthropic/*|claude-*)
+            if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+                echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires ANTHROPIC_API_KEY to be set. Aborting."
+                exit 1
+            fi
+            ;;
+    esac
+fi
+
 AIDER_EXIT=0
 set +e
 "${TIMEOUT_CMD[@]}" aider \
   --no-auto-commits \
+  --no-show-model-warnings \
   --read "$STEP_FILE" \
   --read CONTEXT.md \
   --test-cmd "./verify.sh" \
@@ -199,7 +238,7 @@ fi
 if ./verify.sh; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
-    git add -A
+    git add -A -- ':!plans/*.log'
     git commit -m "Step $NEXT: complete"
     DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
     log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
