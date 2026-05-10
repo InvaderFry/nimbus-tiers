@@ -33,6 +33,22 @@ if [ ! -f "$STEP_FILE" ]; then
     ARCHIVE="plans/$(date +%Y-%m)-${BRANCH}.md"
 
     if [ ! -f "$ARCHIVE" ]; then
+        echo ""
+        echo "The following actions will be taken:"
+        echo "  - Remove per-step files: plans/step*.md"
+        if [ -f "PLAN.md" ]; then
+            echo "  - Archive PLAN.md to $ARCHIVE"
+        fi
+        echo ""
+        read -r -p "Proceed with cleanup and archive? [Y/N] " CONFIRM
+        case "$CONFIRM" in
+            [Yy]*) ;;
+            *)
+                echo "No action will be taken."
+                exit 0
+                ;;
+        esac
+
         echo "Removing per-step files from plans/"
         git rm -f plans/step*.md 2>/dev/null || true
 
@@ -54,6 +70,16 @@ fi
 
 echo "==> Step $NEXT: $STEP_FILE"
 
+STEP_PAD=$(printf '%02d' "$NEXT")
+LOG_FILE="plans/step${STEP_PAD}.log"
+if [ -f "$LOG_FILE" ]; then
+    LOG_N=2
+    while [ -f "plans/step${STEP_PAD}-${LOG_N}.log" ]; do
+        LOG_N=$((LOG_N + 1))
+    done
+    LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
+fi
+
 AIDER_EXIT=0
 aider \
   --no-auto-commits \
@@ -66,7 +92,8 @@ aider \
 Do not touch files not listed in that step. Do not refactor unrelated code. \
 Use CONTEXT.md for project invariants and do-not-change areas. \
 Run ./verify.sh to verify your changes. If it fails, fix and retry — do not stop until it passes." \
-  || AIDER_EXIT=$?
+  2>&1 | tee "$LOG_FILE" || true
+AIDER_EXIT="${PIPESTATUS[0]}"
 
 if [ "$AIDER_EXIT" -ne 0 ]; then
     echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
