@@ -2,6 +2,11 @@
 # Phase 2 executor — runs one Aider step at a time against the local model.
 # Re-run until all steps are complete; picks up where it left off via CompletedSteps.md.
 # Usage: ./phase2.sh
+#
+# Exit codes:
+#   0  step recorded DONE (or all steps complete; archive performed)
+#   1  Aider failure, empty diff, or verify.sh failed — step not recorded
+#   2  step halted intentionally (plans/halt-stepNN.md written) — review halt report
 set -euo pipefail
 
 NEXT=$(python3 -c "
@@ -19,7 +24,26 @@ while n in done:
 print(n)
 ")
 
-STEP_FILE="plans/step$(printf '%02d' "$NEXT").md"
+STEP_PAD=$(printf '%02d' "$NEXT")
+STEP_FILE="plans/step${STEP_PAD}.md"
+HALT_FILE="plans/halt-step${STEP_PAD}.md"
+
+# --- ai-routing.csv helpers ---------------------------------------------------
+ROUTING_LOG="logs/ai-routing.csv"
+log_routing() {
+    # log_routing <task_type> <tests_passed:true|false> <diff_lines_approx> <outcome>
+    local task_type="$1"
+    local tests_passed="$2"
+    local diff_lines="$3"
+    local outcome="$4"
+    local repo_name date
+    repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo .)")
+    date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    if [ -d "$(dirname "$ROUTING_LOG")" ]; then
+        # columns: date,repo,task_type,tier_used,model,escalated_from,tests_passed,diff_lines_approx,human_rework_minutes,outcome
+        echo "${date},${repo_name},${task_type},1,local,,${tests_passed},${diff_lines},,${outcome}" >> "$ROUTING_LOG"
+    fi
+}
 
 if [ ! -f "$STEP_FILE" ]; then
     if [ "$NEXT" -eq 1 ]; then
@@ -75,7 +99,16 @@ fi
 
 echo "==> Step $NEXT: $STEP_FILE"
 
-STEP_PAD=$(printf '%02d' "$NEXT")
+# Token-cap soft check. The Phase 1 spec caps step files at 400 tokens (~300
+# words); warn at >320 words so drift surfaces before it bites Aider's 10K
+# context window. Non-fatal — the run continues.
+if command -v wc >/dev/null 2>&1; then
+    WORDS=$(wc -w < "$STEP_FILE" | tr -d '[:space:]')
+    if [ "${WORDS:-0}" -gt 320 ]; then
+        echo "==> WARN: $STEP_FILE is ${WORDS} words (cap ~300 / 400 tokens). Consider splitting in PLAN.md." >&2
+    fi
+fi
+
 LOG_FILE="plans/step${STEP_PAD}.log"
 if [ -f "$LOG_FILE" ]; then
     LOG_N=2
@@ -85,24 +118,43 @@ if [ -f "$LOG_FILE" ]; then
     LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
 fi
 
+# Bound retries (--max-reflections 3) and wall-clock (timeout 15m). Together
+# they cap the blast radius of a fundamentally underspecified step.
 AIDER_EXIT=0
-aider \
+timeout 15m aider \
   --no-auto-commits \
+  --max-reflections 3 \
   --read "$STEP_FILE" \
   --read CONTEXT.md \
   --test-cmd "./verify.sh" \
   --auto-test \
   --yes \
-  -m "Implement exactly the step described in $STEP_FILE — nothing more. \
-Do not touch files not listed in that step. Do not refactor unrelated code. \
-Use CONTEXT.md for project invariants and do-not-change areas. \
-Run ./verify.sh to verify your changes. If it fails, fix and retry — do not stop until it passes." \
+  -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
   2>&1 | tee "$LOG_FILE" || true
 AIDER_EXIT="${PIPESTATUS[0]}"
+
+if [ "$AIDER_EXIT" -eq 124 ]; then
+    echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
+    exit 1
+fi
 
 if [ "$AIDER_EXIT" -ne 0 ]; then
     echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
     exit "$AIDER_EXIT"
+fi
+
+# Halt detection: if the only thing the executor produced is plans/halt-stepNN.md,
+# the step intentionally stopped because a required prior artifact was missing.
+# Commit the halt report so it is preserved across retries, then exit 2 so the
+# caller can distinguish a halt from a verify.sh failure.
+CHANGED=$(git status --porcelain | sed -E 's/^...//' | sort -u | sed '/^$/d')
+if [ -n "$CHANGED" ] && [ "$CHANGED" = "$HALT_FILE" ]; then
+    echo "==> Step $NEXT halted: only $HALT_FILE was modified."
+    echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
+    git add "$HALT_FILE"
+    git commit -m "Step $NEXT: HALT (missing prior artifact)"
+    log_routing "step-${STEP_PAD}" "false" "0" "halted"
+    exit 2
 fi
 
 # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
@@ -119,9 +171,10 @@ if ./verify.sh; then
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A
     git commit -m "Step $NEXT: complete"
+    DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
+    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
     echo "==> Step $NEXT committed."
 else
     echo "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
     exit 1
 fi
-

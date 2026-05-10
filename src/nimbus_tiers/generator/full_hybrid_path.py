@@ -40,6 +40,7 @@ class FullHybridPath(SetupPath):
             ("VERIFY.md", "VERIFY.md"),
             ("CLAUDE.md", "CLAUDE.md"),
             ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
+            ("PHASE1_SPEC.md", "PHASE1_SPEC.md"),
             ("phase2.sh", "phase2.sh"),
             (".aider.conf.yml", ".aider.conf.yml"),
             (".aiderignore", ".aiderignore"),
@@ -51,6 +52,12 @@ class FullHybridPath(SetupPath):
         return (
             [TemplateSpec(Path(src), Path(dest)) for src, dest in common]
             + self._stack_template_files()
+            + [
+                TemplateSpec(
+                    Path(f"stacks/{self.stack}/PHASE1_VERIFY.md"),
+                    Path("PHASE1_VERIFY_HELPER.md"),
+                )
+            ]
         )
 
     def _stack_template_files(self) -> list[TemplateSpec]:
