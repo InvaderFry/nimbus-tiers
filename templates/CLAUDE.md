@@ -38,6 +38,12 @@ prompt is a thin shell that points Claude at the spec and supplies the
 per-feature inputs. The detailed starter prompt is in `NIMBUS_GUIDE.md`;
 both this template and that one resolve to the same spec.
 
+> **Two entry points are deliberate.** `CLAUDE.md` is auto-loaded by Claude
+> Code on every session; `NIMBUS_GUIDE.md` is the human-facing onboarding
+> doc with a worked example. They share `PHASE1_SPEC.md` so policy can't
+> diverge — but if you edit either prompt shell, keep them aligned by
+> updating the spec, not by widening the shells.
+
 ```
 We are in Phase 1: planning and verification design only.
 

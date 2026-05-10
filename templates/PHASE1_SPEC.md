@@ -222,6 +222,11 @@ A ready-to-paste stack-specific helper for this project lives in
 based on this project's stack). Inline that snippet — do not invent your
 own quiet-log filter, and do not adapt a helper for a different stack.
 
+If `PHASE1_VERIFY_HELPER.md` is missing (e.g. the scaffolder did not ship
+a helper for this project's stack), apply the quiet-log discipline rules
+above using the chosen toolchain's native quiet/CI flags. Do not paste a
+helper for a different stack as a fallback.
+
 ### 5. plans/stepNN.md
 
 One file per `PLAN.md` step. Use zero-padded two-digit numbers

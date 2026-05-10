@@ -30,6 +30,7 @@ HALT_FILE="plans/halt-step${STEP_PAD}.md"
 
 # --- ai-routing.csv helpers ---------------------------------------------------
 ROUTING_LOG="logs/ai-routing.csv"
+ROUTING_HEADER="date,repo,task_type,tier_used,model,escalated_from,tests_passed,diff_lines_approx,human_rework_minutes,outcome"
 log_routing() {
     # log_routing <task_type> <tests_passed:true|false> <diff_lines_approx> <outcome>
     local task_type="$1"
@@ -40,7 +41,11 @@ log_routing() {
     repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo .)")
     date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ -d "$(dirname "$ROUTING_LOG")" ]; then
-        # columns: date,repo,task_type,tier_used,model,escalated_from,tests_passed,diff_lines_approx,human_rework_minutes,outcome
+        # Recreate header if the file is missing or empty so downstream tooling
+        # always sees a parseable CSV.
+        if [ ! -s "$ROUTING_LOG" ]; then
+            echo "$ROUTING_HEADER" > "$ROUTING_LOG"
+        fi
         echo "${date},${repo_name},${task_type},1,local,,${tests_passed},${diff_lines},,${outcome}" >> "$ROUTING_LOG"
     fi
 }
@@ -120,8 +125,21 @@ fi
 
 # Bound retries (--max-reflections 3) and wall-clock (timeout 15m). Together
 # they cap the blast radius of a fundamentally underspecified step.
+# `timeout(1)` is GNU coreutils — present on Linux, but not in stock macOS.
+# Probe and fall back to running aider unbounded with a clear warning rather
+# than failing the run; users who want the wall-clock cap can install
+# coreutils (`brew install coreutils` exposes `gtimeout`, or symlink it as
+# `timeout`).
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_CMD=(timeout 15m)
+else
+    echo "==> WARN: 'timeout' not found; running aider without a wall-clock cap." >&2
+    echo "    Install coreutils to enable the 15-minute step timeout." >&2
+    TIMEOUT_CMD=()
+fi
+
 AIDER_EXIT=0
-timeout 15m aider \
+"${TIMEOUT_CMD[@]}" aider \
   --no-auto-commits \
   --max-reflections 3 \
   --read "$STEP_FILE" \
@@ -133,7 +151,7 @@ timeout 15m aider \
   2>&1 | tee "$LOG_FILE" || true
 AIDER_EXIT="${PIPESTATUS[0]}"
 
-if [ "$AIDER_EXIT" -eq 124 ]; then
+if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
     echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
     exit 1
 fi
@@ -143,16 +161,25 @@ if [ "$AIDER_EXIT" -ne 0 ]; then
     exit "$AIDER_EXIT"
 fi
 
-# Halt detection: if the only thing the executor produced is plans/halt-stepNN.md,
-# the step intentionally stopped because a required prior artifact was missing.
-# Commit the halt report so it is preserved across retries, then exit 2 so the
-# caller can distinguish a halt from a verify.sh failure.
-CHANGED=$(git status --porcelain | sed -E 's/^...//' | sort -u | sed '/^$/d')
-if [ -n "$CHANGED" ] && [ "$CHANGED" = "$HALT_FILE" ]; then
-    echo "==> Step $NEXT halted: only $HALT_FILE was modified."
+# Halt detection: if the executor produced or modified plans/halt-stepNN.md
+# during this run, it intentionally stopped because a required prior artifact
+# was missing. Treat the halt file's dirty status as authoritative — partial
+# edits in other files MUST NOT be committed as DONE. We commit only the halt
+# report (so it survives across retries) and discard any other in-tree changes.
+# Exit 2 so the caller can distinguish a halt from a verify.sh failure.
+#
+# `git status --porcelain -- <path>` returns a non-empty line iff the path is
+# untracked, modified, or staged. A halt file committed in a previous run
+# would be clean, so this check fires only for halts produced *this run*.
+if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
+    echo "==> Step $NEXT halted: $HALT_FILE was written by the executor."
+    echo "    Discarding any unrelated in-tree changes from this run."
     echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
-    git add "$HALT_FILE"
+    git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
+    git add -- "$HALT_FILE"                       # restage only the halt file
     git commit -m "Step $NEXT: HALT (missing prior artifact)"
+    git checkout -- . 2>/dev/null || true         # discard tracked-file edits
+    git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
     log_routing "step-${STEP_PAD}" "false" "0" "halted"
     exit 2
 fi
