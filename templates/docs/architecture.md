@@ -1182,13 +1182,16 @@ This is genuinely useful for the 10-20% of work where compliance matters. The ar
 
 **Symptom:** `./verify.sh` passed during a run, but `CompletedSteps.md` shows no entry for that step. The next `./phase2.sh` run re-executes the same step against already-modified files.
 
-**Cause:** Aider completed the edits, `./verify.sh` exited 0, but Aider then crashed (typically during its internal summarization step) before it could append to `CompletedSteps.md` and commit. The error output will show an Aider exception rather than a project build failure.
+**Cause:** Two variants:
 
-**Mitigation:** `phase2.sh` is designed to own all bookkeeping itself. After Aider exits, the script re-runs `./verify.sh`; on success it writes to `CompletedSteps.md` and commits — Aider never touches either. If you see this failure on an older copy of `phase2.sh`, upgrade it from the template.
+- *Aider crash:* Aider completed the edits, `./verify.sh` exited 0, but Aider then crashed (typically during its internal summarization step) before it could append to `CompletedSteps.md` and commit. The error output will show an Aider exception rather than a project build failure.
+- *Silent model failure:* Aider exits 0 without modifying any files because it could not reach the model (bad API key, wrong endpoint, network error). `set -e` does not catch this because the exit code is 0.
+
+**Mitigation:** `phase2.sh` is designed to own all bookkeeping itself. After Aider exits, the script checks the exit code, then checks whether any files changed, then re-runs `./verify.sh`; on success it writes to `CompletedSteps.md` and commits — Aider never touches either. If you see this failure on an older copy of `phase2.sh`, upgrade it from the template.
 
 **If you hit it on an existing repo:**
 
-1. Check `git diff HEAD~1` — if the Step N edits are already committed, `CompletedSteps.md` just needs a manual entry.
+1. Run `git status` to see whether Step N's edits are present but uncommitted, and `git log --oneline -3` to see whether a step commit already landed.
 2. If the edits are present but uncommitted, run `./verify.sh`, then manually append `Step N: DONE` to `CompletedSteps.md`, then `git add -A && git commit -m "Step N: complete"`.
 3. Re-run `./phase2.sh` — it will now advance to Step N+1.
 
