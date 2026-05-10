@@ -123,7 +123,7 @@ if [ -f "$LOG_FILE" ]; then
     LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
 fi
 
-# Bound retries (--max-reflections 3) and wall-clock (timeout 15m). Together
+# Bound retries (max-reflections: 3 in .aider.conf.yml) and wall-clock (timeout 15m). Together
 # they cap the blast radius of a fundamentally underspecified step.
 # `timeout(1)` is GNU coreutils — present on Linux, but not in stock macOS.
 # Probe and fall back to running aider unbounded with a clear warning rather
@@ -139,17 +139,18 @@ else
 fi
 
 AIDER_EXIT=0
+set +e
 "${TIMEOUT_CMD[@]}" aider \
   --no-auto-commits \
-  --max-reflections 3 \
   --read "$STEP_FILE" \
   --read CONTEXT.md \
   --test-cmd "./verify.sh" \
   --auto-test \
   --yes \
   -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
-  2>&1 | tee "$LOG_FILE" || true
+  2>&1 | tee "$LOG_FILE"
 AIDER_EXIT="${PIPESTATUS[0]}"
+set -e
 
 if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
     echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
