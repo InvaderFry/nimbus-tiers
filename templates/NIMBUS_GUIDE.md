@@ -95,6 +95,25 @@ Create:
 - Once initialized, run the project’s automated build/lint/test gate.
 - Do not run manual/live-network checks unless explicitly required.
 - Make executable if possible.
+- Make sure only important logs are printed out. For example, part of a Maven verify might look like this. 
+
+run_tests_quiet() {
+  ./mvnw --batch-mode test \
+    -Dspring.main.banner-mode=off \
+    -Dlogging.level.root=ERROR \
+    -Dlogging.level.org.springframework=ERROR \
+    -Ddebug=false \
+    -Dspring.test.context.failure.threshold=1 \
+    -DtrimStackTrace=true \
+    2>&1 | awk '
+      /APPLICATION FAILED TO START/ {show=1; count=0}
+      show && count < 35 {print; count++}
+      /\[ERROR\]/ {print}
+      /Caused by:/ {print}
+      /No qualifying bean/ {print}
+      /BUILD FAILURE/ {print}
+    '
+}
 
 5. plans/step01.md, step02.md, ... (one file per PLAN.md step)
 - Each file covers exactly one step: file(s) to change, what to do, edge cases, and acceptance tests for that step only.
@@ -197,6 +216,25 @@ Create:
 - Once initialized, run the project’s automated build/lint/test gate.
 - Do not run manual/live-network checks unless explicitly required.
 - Make executable if possible.
+- Make sure only important logs are printed out. For example, part of a Maven verify might look like this. 
+
+run_tests_quiet() {
+  ./mvnw --batch-mode test \
+    -Dspring.main.banner-mode=off \
+    -Dlogging.level.root=ERROR \
+    -Dlogging.level.org.springframework=ERROR \
+    -Ddebug=false \
+    -Dspring.test.context.failure.threshold=1 \
+    -DtrimStackTrace=true \
+    2>&1 | awk '
+      /APPLICATION FAILED TO START/ {show=1; count=0}
+      show && count < 35 {print; count++}
+      /\[ERROR\]/ {print}
+      /Caused by:/ {print}
+      /No qualifying bean/ {print}
+      /BUILD FAILURE/ {print}
+    '
+}
 
 5. plans/step01.md, step02.md, ... (one file per PLAN.md step)
 - Each file covers exactly one step: file(s) to change, what to do, edge cases, and acceptance tests for that step only.
