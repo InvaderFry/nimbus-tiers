@@ -40,14 +40,19 @@ if [ ! -f "$STEP_FILE" ]; then
             echo "  - Archive PLAN.md to $ARCHIVE"
         fi
         echo ""
-        read -r -p "Proceed with cleanup and archive? [Y/N] " CONFIRM
-        case "$CONFIRM" in
-            [Yy]*) ;;
-            *)
-                echo "No action will be taken."
-                exit 0
-                ;;
-        esac
+        if [ -t 0 ]; then
+            read -r -p "Proceed with cleanup and archive? [Y/N] " CONFIRM
+            case "$CONFIRM" in
+                [Yy]*) ;;
+                *)
+                    echo "No action will be taken."
+                    exit 0
+                    ;;
+            esac
+        else
+            echo "Non-interactive session — skipping cleanup. Re-run interactively to archive."
+            exit 0
+        fi
 
         echo "Removing per-step files from plans/"
         git rm -f plans/step*.md 2>/dev/null || true

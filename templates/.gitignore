@@ -7,6 +7,9 @@ TESTS.md
 .aider.chat.history.md
 .aider.input.history
 
+# Phase 2 aider run logs — transient, not for version control
+plans/*.log
+
 # Local secrets — must never be committed.
 .env
 .env.*
