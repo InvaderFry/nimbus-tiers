@@ -123,8 +123,10 @@ if [ -f "$LOG_FILE" ]; then
     LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
 fi
 
-# Bound retries (max-reflections: 3 in .aider.conf.yml) and wall-clock (timeout 15m). Together
-# they cap the blast radius of a fundamentally underspecified step.
+# Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally
+# underspecified step. Note: aider does not expose a --max-reflections flag
+# in the version used here; the retry count is not configurable via CLI or
+# config and defaults to aider's internal limit.
 # `timeout(1)` is GNU coreutils — present on Linux, but not in stock macOS.
 # Probe and fall back to running aider unbounded with a clear warning rather
 # than failing the run; users who want the wall-clock cap can install

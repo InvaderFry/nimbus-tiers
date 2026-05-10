@@ -17,9 +17,6 @@ auto-commits: true
 auto-test: true
 test-cmd: {{TEST_CMD}}
 
-# Cap auto-reflection loops so a bad step can't spin indefinitely.
-max-reflections: 3
-
 # Token budget — Qwen3-32B on 16GB has a 10K token context window.
 # Disabling the repo map and using diff edits reclaims ~2K tokens per session.
 map-tokens: 0
