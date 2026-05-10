@@ -228,9 +228,10 @@ What it does each run:
 2. Loads `plans/stepNN.md` — only that step, nothing else.
 3. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window.
 4. Runs `./verify.sh` automatically after each edit attempt (via `--auto-test`).
-5. After Aider exits, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md` and commits. Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
-6. On failure: stops without touching `CompletedSteps.md` or git history.
-7. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
+5. After Aider exits, `phase2.sh` checks Aider's exit code and whether any files were modified. If Aider exited non-zero, or exited 0 with no file changes (e.g. bad API key, unreachable model), the step is not recorded and the script exits 1.
+6. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md` and commits. Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
+7. On failure: stops without touching `CompletedSteps.md` or git history.
+8. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
 
 Notes:
 - `CompletedSteps.md` is written by `phase2.sh` after Aider exits, not by Aider itself. This is intentional — delegating bookkeeping to Aider is fragile because Aider can crash after verification passes but before it finishes its summarization step, leaving the step recorded as incomplete.
