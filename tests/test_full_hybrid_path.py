@@ -26,6 +26,7 @@ def test_full_hybrid_template_files_includes_core_artifacts() -> None:
         Path("VERIFY.md"),
         Path("CLAUDE.md"),
         Path("NIMBUS_GUIDE.md"),
+        Path("PHASE1_SPEC.md"),
         Path(".aider.conf.yml"),
         Path(".aiderignore"),
         Path(".gitignore"),
@@ -34,6 +35,16 @@ def test_full_hybrid_template_files_includes_core_artifacts() -> None:
         Path("docs/architecture.md"),
     }
     assert expected.issubset(dests)
+
+
+@pytest.mark.parametrize("stack", ["java-maven", "java-gradle", "python", "node"])
+def test_full_hybrid_ships_stack_specific_verify_helper(stack: str) -> None:
+    specs = FullHybridPath(stack=stack).template_files()
+    by_dest = {s.dest_relative: s.src_relative for s in specs}
+    assert Path("PHASE1_VERIFY_HELPER.md") in by_dest
+    assert by_dest[Path("PHASE1_VERIFY_HELPER.md")] == Path(
+        f"stacks/{stack}/PHASE1_VERIFY.md"
+    )
 
 
 @pytest.mark.parametrize("stack,expected_dest", [

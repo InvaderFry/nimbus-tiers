@@ -10,7 +10,7 @@ Scaffolded from the [nimbus-tiers](https://github.com/invaderfry/nimbus-tiers) t
 | 2. Execute | Aider + local Qwen3-32B (TabbyAPI) | Series of git commits, one per step |
 | 3. Review | Claude Code (frontier) | Fix list or `APPROVED` |
 
-See [`docs/architecture.md`](./docs/architecture.md) for the full reference.
+See [`docs/architecture.md`](./docs/architecture.md) for the full reference. The canonical Phase 1 spec lives in [`PHASE1_SPEC.md`](./PHASE1_SPEC.md).
 
 ## Per-feature workflow
 
@@ -30,30 +30,24 @@ claude              # paste the Phase 3 starter prompt below, filling in that ha
 
 ### Phase 1 starter prompt
 
-Copy this as your **first message** when opening a new Claude Code session for planning. Fill in the bracketed parts.
+Copy this as your **first message** when opening a new Claude Code session for planning. Fill in the bracketed parts. The full output schema, allowed-files list, per-step token cap, halt semantics, and per-section policy live in [`PHASE1_SPEC.md`](./PHASE1_SPEC.md) — Claude must follow it exactly.
 
 ```
 We are in Phase 1: planning and verification design only.
 
+Read PHASE1_SPEC.md and follow it exactly. It defines the role, allowed
+files, output schema, per-step token cap, halt semantics, and per-section
+policy. Do not deviate from it.
+
 Do not implement the feature.
 
-Allowed files to create or replace:
-- CONTEXT.md
-- PLAN.md
-- TESTS.md
-- VERIFY.md
-- verify.sh
-- plans/step01.md, step02.md, ... one file per implementation step
-- plans/halt-step01.md, halt-step02.md, ... created only if the executor
-  halts on that step due to a missing artifact
+If any project input below is missing, ambiguous, or insufficient to plan
+against, ask clarifying questions before writing any artifact. Do not
+invent or assume.
 
-Do not create implementation source files.
-Do not modify implementation source files.
-Do not add dependencies unless explicitly allowed.
-Do not create CompletedSteps.md.
-Do not mark implementation steps DONE.
-Do not modify CONTEXT.md during implementation steps unless explicitly instructed.
-Do not create files outside the allowed list.
+For verify.sh, inline the snippet from PHASE1_VERIFY_HELPER.md (which is
+already specific to this project's stack). Do not invent your own quiet-log
+filter for a stack the helper does not cover.
 
 Project inputs:
 
@@ -64,283 +58,29 @@ TECH STACK:
 [Language, framework, build/test tools, required versions.]
 
 PROJECT STATE:
-[Describe what exists and what is missing.]
+[What exists today. Note whether the project has been scaffolded.]
 
 OUTPUT / BEHAVIOR CONTRACT:
-Describe the exact expected behavior. Include as many of the following as apply:
-- HTTP endpoints: method, path, request shape, response shape, status codes.
-- CLI commands: arguments, flags, stdout format, stderr format, exit codes.
-- Files produced: paths, formats, encoding, size constraints.
-- Logs: which lines are emitted, at what level, in what format.
-- Events or side effects: database writes, queue messages, external calls.
-- Error conditions: what input triggers an error, what the error output looks like.
-If none of these categories applies, describe the observable outcome that
-would prove the feature works correctly to an outside observer.
+[Observable behavior that proves the feature works. See PHASE1_SPEC.md
+§Inputs for which categories typically apply.]
 
 EXTERNAL DEPENDENCIES:
-[APIs, databases, files, network, credentials, etc. Say what must be mocked
+[APIs, databases, files, network, credentials. State what must be mocked
 in automated tests.]
-
-Important execution model:
-- PLAN.md and TESTS.md are for humans and Phase 3 review.
-- The implementation executor does not read PLAN.md or TESTS.md.
-- The implementation executor reads only:
-  - CONTEXT.md
-  - one plans/stepNN.md file
-- Therefore, every plans/stepNN.md file must be self-contained.
-- Step files must not assume earlier steps were completed exactly as planned.
-- Every step must tell the executor to inspect real current files before editing.
-- If the executor halts mid-step due to a missing artifact, a human or
-  orchestrator must review the halt report before the next step begins.
-
-Create the following.
-
-0. CONTEXT.md
-
-Write a concise project context document that the implementation executor
-will read alongside every step file.
-
-Include:
-- Project name and one-sentence purpose.
-- One or two sentences describing the feature being built, so the executor
-  understands the broader goal without needing to read PLAN.md. Do not
-  include the step-by-step plan.
-- Tech stack (language, framework, build tool, key versions).
-- Project structure overview (key directories and their roles).
-- Build and test commands.
-- Invariants every step must respect (coding conventions, file naming rules,
-  required environment variables, security constraints, etc.).
-
-Do not include the step-by-step plan or test strategy. CONTEXT.md is a
-stable reference, not a changelog. Keep it under 350 words. It must not be
-modified during implementation steps unless explicitly instructed.
-
-1. PLAN.md
-
-Write a numbered implementation plan.
-
-Each step must:
-- Be independently dispatchable to an AI coding agent.
-- Be small enough to fit within the step file token limit (see section 5).
-- Have a clear done condition.
-- Include setup/project-structure work if needed.
-- Include testing work where appropriate.
-- Include final manual or end-to-end verification if needed.
-
-Avoid steps whose only work is creating a single empty file or adding a
-single import. Combine trivial actions into a meaningful step.
-
-Do not include implementation code.
-Do not mark any step DONE.
-
-2. TESTS.md
-
-Write the acceptance test strategy.
-
-Include:
-- Automated checks.
-- Manual checks in a separate section.
-- Success path coverage.
-- Edge case coverage.
-- Output formatting coverage.
-- Side effect coverage.
-- Error handling coverage.
-- Mocking strategy for external dependencies.
-- Notes on avoiding live network in automated tests unless explicitly required.
-
-Do not include actual test source code.
-
-3. VERIFY.md
-
-Write project-specific verification instructions.
-
-Use these sections:
-- Required before Phase 2 begins
-- Required before every AI step commit
-- Required before merge / final review
-- Human review required
-
-Verification policy:
-- The "Required before Phase 2 begins" section must include:
-    1. Run ./verify.sh and confirm it exits 0 when the project is
-       uninitialized (i.e., the sentinel file is absent).
-    2. Introduce a deliberate test failure, run ./verify.sh, and confirm
-       it exits non-zero and surfaces the failure clearly. Then revert the
-       deliberate failure. If introducing a test failure is not feasible,
-       confirm at minimum that the uninitialized case exits 0 cleanly.
-- Before every AI step commit, the single command must be: ./verify.sh
-- A step may only be marked DONE after ./verify.sh exits 0.
-- Do not commit if ./verify.sh fails.
-- Manual checks and live-network checks should be final-review checks,
-  not per-step checks.
-- Per-step checks must be automated, deterministic, and local unless
-  explicitly required.
-- Mention runtime/build versions.
-- Mention generated artifacts that must not be committed.
-- Mention sensitive output (secrets, tokens, PII) that must be sanitized.
-- In the "Required before merge / final review" section, include a check
-  that CONTEXT.md still accurately describes the project structure, build
-  commands, and feature summary as built — not just as originally planned.
-  If it has drifted, update it before merging.
-
-4. verify.sh
-
-Write a Bash script that:
-- Starts with set -euo pipefail.
-- Can be run safely from the project root.
-- Detects whether the project is initialized using a stack-specific sentinel
-  file derived from TECH STACK. Common sentinel files by stack:
-    Maven:  pom.xml
-    Node:   package.json
-    Go:     go.mod
-    Rust:   Cargo.toml
-    Python: check for pyproject.toml first; if absent, check requirements.txt;
-            if neither exists, print a message naming both and exit 0
-    Ruby:   Gemfile
-  Use whichever sentinel is appropriate for this project. If the expected
-  sentinel does not exist, print a message that names it and exit 0.
-- If initialized, runs the automated build/lint/test gate.
-- Does not perform manual checks.
-- Does not perform live-network checks unless explicitly required.
-- Keeps logs concise and focused on failures.
-
-For noisy tools (Maven, Gradle, npm, pytest, go test, cargo, etc.):
-- Prefer quiet, batch, or CI mode when available.
-- Suppress routine banners and debug logs when safe.
-- Preserve failure summaries, error lines, stack traces, and test failure
-  messages.
-- Do not hide the final exit status.
-- Do not make failures look successful.
-- If using a pipeline to filter logs, use set -o pipefail and avoid
-  swallowing exit codes.
-
-If the project uses Maven/Spring, a quiet failure-focused helper may look
-like this:
-
-  run_tests_quiet() {
-    ./mvnw --batch-mode test \
-      -Dspring.main.banner-mode=off \
-      -Dlogging.level.root=ERROR \
-      -Dlogging.level.org.springframework=ERROR \
-      -Ddebug=false \
-      -Dspring.test.context.failure.threshold=1 \
-      -DtrimStackTrace=true \
-      2>&1 | awk '
-        /APPLICATION FAILED TO START/ {show=1; count=0}
-        show && count < 35 {print; count++}
-        /\[ERROR\]/ {print}
-        /Caused by:/ {print}
-        /No qualifying bean/ {print}
-        /BUILD FAILURE/ {print}
-      '
-  }
-
-Use this helper only when the project uses Maven/Spring. For all other
-toolchains, apply the same quiet-log principle using tools native to that
-stack — do not copy the Maven helper verbatim.
-
-Make verify.sh executable.
-
-5. plans/stepNN.md
-
-Create one file per PLAN.md step:
-- plans/step01.md
-- plans/step02.md
-- plans/step03.md
-- Continue using zero-padded two-digit numbers (step10.md, step11.md, ...).
-
-Each file must not exceed 400 tokens (roughly 300 words). If a step cannot
-be expressed within this limit, split it into two steps in PLAN.md.
-
-Omit any section that does not apply to this step rather than writing a
-placeholder. Every section that is present must contain substantive content.
-
-Each step file must use this structure:
-
-  # Step NN: [Short title]
-
-  ## Goal
-  [One-sentence goal.]
-
-  ## Inspect first
-  - Inspect actual current files before editing anything.
-  - List likely files or directories to check. Do not assume they exist.
-  - If this step modifies files that other steps also modify, read the
-    current file state before editing — do not assume a prior step's
-    output is present.
-  - If this step depends on an artifact from an earlier step (a class,
-    module, route, file, etc.), verify it exists before proceeding. If it
-    is missing, write the gap description to plans/halt-stepNN.md (where
-    NN matches this step's number), then stop and take no further action
-    in this step. Do not create a substitute or approximation.
-
-  ## Files to change
-  - List intended files.
-  - Create only if missing; otherwise update existing files carefully.
-
-  ## Work
-  - Describe behavior to implement.
-  - Prefer behavioral requirements over code samples.
-  - Do not include full source code unless absolutely necessary.
-  - Include version-compatibility checks for APIs, imports, annotations,
-    plugins, or dependencies before using them.
-
-  ## Edge cases
-  [Omit if none apply to this step.]
-
-  ## Acceptance tests
-  - List behavior-based tests for this step only.
-  - Tests must be deterministic.
-  - Tests must avoid live network unless explicitly required.
-  - Tests must verify behavior, not only compilation.
-
-  ## Done condition
-  - State the clear completion condition.
-  - ./verify.sh must exit 0 before this step can be marked DONE.
-
-Additional guardrails for all step files:
-- Do not assume previous steps were completed exactly as planned.
-- Provide fallback guidance when state is uncertain.
-- Do not say "use X, not Y" for version-sensitive APIs without explaining
-  how to verify X is available.
-- For any new file, class, module, route, handler, command, or piece of
-  functionality, instruct the executor to check for duplicates first.
-- If a required artifact from a prior step is absent, write the gap to
-  plans/halt-stepNN.md and stop — do not work around it or create a substitute.
 ```
 
-#### Example
+#### Example (Project inputs only)
+
+The starter prompt above is constant; only the bracketed inputs change per feature. Here is one filled-in `Project inputs` block from a real run:
 
 ```
-We are in Phase 1: planning and verification design only.
-
-Do not implement the feature.
-
-Allowed files to create or replace:
-- CONTEXT.md
-- PLAN.md
-- TESTS.md
-- VERIFY.md
-- verify.sh
-- plans/step01.md, step02.md, ... one file per implementation step
-- plans/halt-step01.md, halt-step02.md, ... created only if the executor
-  halts on that step due to a missing artifact
-
-Do not create implementation source files.
-Do not modify implementation source files.
-Do not add dependencies unless explicitly allowed.
-Do not create CompletedSteps.md.
-Do not mark implementation steps DONE.
-Do not modify CONTEXT.md during implementation steps unless explicitly instructed.
-Do not create files outside the allowed list.
-
 Project inputs:
 
 FEATURE:
-Create a Java Spring Boot application that fetches the
-current weather for Plano, Texas, prints it to the console, and writes
-the same output to weather.txt in the project root directory, overwriting
-the file on each execution. The process runs, outputs results, and exits with code 0.
+Create a Java Spring Boot application that fetches the current weather
+for Plano, Texas, prints it to the console, and writes the same output
+to weather.txt in the project root directory, overwriting the file on
+each execution. The process runs, outputs results, and exits with code 0.
 
 TECH STACK:
 - Java 21
@@ -350,10 +90,12 @@ TECH STACK:
 PROJECT STATE:
 This is the first generation of this project. The directory contains only
 nimbus-tiers scaffolding files (CONTEXT.md, VERIFY.md, CLAUDE.md,
-.aider.conf.yml, etc.). There might not be src/ directory, no pom.xml, and no
-Java source or it will be barebones. The plan must include a step to create the Spring Boot project structure from scratch. All content in CONTEXT.md, VERIFY.md, and CLAUDE.md is boilerplate from
-the project generator. Treat every section as a template to be replaced
-with project-specific content.
+.aider.conf.yml, etc.). There might not be a src/ directory, no pom.xml,
+and no Java source — or it will be barebones. The plan must include a
+step to create the Spring Boot project structure from scratch. All
+content in CONTEXT.md, VERIFY.md, and CLAUDE.md is boilerplate from the
+project generator. Treat every section as a template to be replaced with
+project-specific content.
 
 OUTPUT / BEHAVIOR CONTRACT:
 Both the console and weather.txt must show these fields, one per line:
@@ -364,234 +106,7 @@ Both the console and weather.txt must show these fields, one per line:
   Observed At:  <ISO-8601 timestamp>
 
 EXTERNAL DEPENDENCIES:
-Pick a free weather API that doesn't need an API key. 
-
-Important execution model:
-- PLAN.md and TESTS.md are for humans and Phase 3 review.
-- The implementation executor does not read PLAN.md or TESTS.md.
-- The implementation executor reads only:
-  - CONTEXT.md
-  - one plans/stepNN.md file
-- Therefore, every plans/stepNN.md file must be self-contained.
-- Step files must not assume earlier steps were completed exactly as planned.
-- Every step must tell the executor to inspect real current files before editing.
-- If the executor halts mid-step due to a missing artifact, a human or
-  orchestrator must review the halt report before the next step begins.
-
-Create the following.
-
-0. CONTEXT.md
-
-Write a concise project context document that the implementation executor
-will read alongside every step file.
-
-Include:
-- Project name and one-sentence purpose.
-- One or two sentences describing the feature being built, so the executor
-  understands the broader goal without needing to read PLAN.md. Do not
-  include the step-by-step plan.
-- Tech stack (language, framework, build tool, key versions).
-- Project structure overview (key directories and their roles).
-- Build and test commands.
-- Invariants every step must respect (coding conventions, file naming rules,
-  required environment variables, security constraints, etc.).
-
-Do not include the step-by-step plan or test strategy. CONTEXT.md is a
-stable reference, not a changelog. Keep it under 350 words. It must not be
-modified during implementation steps unless explicitly instructed.
-
-1. PLAN.md
-
-Write a numbered implementation plan.
-
-Each step must:
-- Be independently dispatchable to an AI coding agent.
-- Be small enough to fit within the step file token limit (see section 5).
-- Have a clear done condition.
-- Include setup/project-structure work if needed.
-- Include testing work where appropriate.
-- Include final manual or end-to-end verification if needed.
-
-Avoid steps whose only work is creating a single empty file or adding a
-single import. Combine trivial actions into a meaningful step.
-
-Do not include implementation code.
-Do not mark any step DONE.
-
-2. TESTS.md
-
-Write the acceptance test strategy.
-
-Include:
-- Automated checks.
-- Manual checks in a separate section.
-- Success path coverage.
-- Edge case coverage.
-- Output formatting coverage.
-- Side effect coverage.
-- Error handling coverage.
-- Mocking strategy for external dependencies.
-- Notes on avoiding live network in automated tests unless explicitly required.
-
-Do not include actual test source code.
-
-3. VERIFY.md
-
-Write project-specific verification instructions.
-
-Use these sections:
-- Required before Phase 2 begins
-- Required before every AI step commit
-- Required before merge / final review
-- Human review required
-
-Verification policy:
-- The "Required before Phase 2 begins" section must include:
-    1. Run ./verify.sh and confirm it exits 0 when the project is
-       uninitialized (i.e., the sentinel file is absent).
-    2. Introduce a deliberate test failure, run ./verify.sh, and confirm
-       it exits non-zero and surfaces the failure clearly. Then revert the
-       deliberate failure. If introducing a test failure is not feasible,
-       confirm at minimum that the uninitialized case exits 0 cleanly.
-- Before every AI step commit, the single command must be: ./verify.sh
-- A step may only be marked DONE after ./verify.sh exits 0.
-- Do not commit if ./verify.sh fails.
-- Manual checks and live-network checks should be final-review checks,
-  not per-step checks.
-- Per-step checks must be automated, deterministic, and local unless
-  explicitly required.
-- Mention runtime/build versions.
-- Mention generated artifacts that must not be committed.
-- Mention sensitive output (secrets, tokens, PII) that must be sanitized.
-- In the "Required before merge / final review" section, include a check
-  that CONTEXT.md still accurately describes the project structure, build
-  commands, and feature summary as built — not just as originally planned.
-  If it has drifted, update it before merging.
-
-4. verify.sh
-
-Write a Bash script that:
-- Starts with set -euo pipefail.
-- Can be run safely from the project root.
-- Detects whether the project is initialized using a stack-specific sentinel
-  file derived from TECH STACK. Common sentinel files by stack:
-    Maven:  pom.xml
-    Node:   package.json
-    Go:     go.mod
-    Rust:   Cargo.toml
-    Python: check for pyproject.toml first; if absent, check requirements.txt;
-            if neither exists, print a message naming both and exit 0
-    Ruby:   Gemfile
-  Use whichever sentinel is appropriate for this project. If the expected
-  sentinel does not exist, print a message that names it and exit 0.
-- If initialized, runs the automated build/lint/test gate.
-- Does not perform manual checks.
-- Does not perform live-network checks unless explicitly required.
-- Keeps logs concise and focused on failures.
-
-For noisy tools (Maven, Gradle, npm, pytest, go test, cargo, etc.):
-- Prefer quiet, batch, or CI mode when available.
-- Suppress routine banners and debug logs when safe.
-- Preserve failure summaries, error lines, stack traces, and test failure
-  messages.
-- Do not hide the final exit status.
-- Do not make failures look successful.
-- If using a pipeline to filter logs, use set -o pipefail and avoid
-  swallowing exit codes.
-
-If the project uses Maven/Spring, a quiet failure-focused helper may look
-like this:
-
-  run_tests_quiet() {
-    ./mvnw --batch-mode test \
-      -Dspring.main.banner-mode=off \
-      -Dlogging.level.root=ERROR \
-      -Dlogging.level.org.springframework=ERROR \
-      -Ddebug=false \
-      -Dspring.test.context.failure.threshold=1 \
-      -DtrimStackTrace=true \
-      2>&1 | awk '
-        /APPLICATION FAILED TO START/ {show=1; count=0}
-        show && count < 35 {print; count++}
-        /\[ERROR\]/ {print}
-        /Caused by:/ {print}
-        /No qualifying bean/ {print}
-        /BUILD FAILURE/ {print}
-      '
-  }
-
-Use this helper only when the project uses Maven/Spring. For all other
-toolchains, apply the same quiet-log principle using tools native to that
-stack — do not copy the Maven helper verbatim.
-
-Make verify.sh executable.
-
-5. plans/stepNN.md
-
-Create one file per PLAN.md step:
-- plans/step01.md
-- plans/step02.md
-- plans/step03.md
-- Continue using zero-padded two-digit numbers (step10.md, step11.md, ...).
-
-Each file must not exceed 400 tokens (roughly 300 words). If a step cannot
-be expressed within this limit, split it into two steps in PLAN.md.
-
-Omit any section that does not apply to this step rather than writing a
-placeholder. Every section that is present must contain substantive content.
-
-Each step file must use this structure:
-
-  # Step NN: [Short title]
-
-  ## Goal
-  [One-sentence goal.]
-
-  ## Inspect first
-  - Inspect actual current files before editing anything.
-  - List likely files or directories to check. Do not assume they exist.
-  - If this step modifies files that other steps also modify, read the
-    current file state before editing — do not assume a prior step's
-    output is present.
-  - If this step depends on an artifact from an earlier step (a class,
-    module, route, file, etc.), verify it exists before proceeding. If it
-    is missing, write the gap description to plans/halt-stepNN.md (where
-    NN matches this step's number), then stop and take no further action
-    in this step. Do not create a substitute or approximation.
-
-  ## Files to change
-  - List intended files.
-  - Create only if missing; otherwise update existing files carefully.
-
-  ## Work
-  - Describe behavior to implement.
-  - Prefer behavioral requirements over code samples.
-  - Do not include full source code unless absolutely necessary.
-  - Include version-compatibility checks for APIs, imports, annotations,
-    plugins, or dependencies before using them.
-
-  ## Edge cases
-  [Omit if none apply to this step.]
-
-  ## Acceptance tests
-  - List behavior-based tests for this step only.
-  - Tests must be deterministic.
-  - Tests must avoid live network unless explicitly required.
-  - Tests must verify behavior, not only compilation.
-
-  ## Done condition
-  - State the clear completion condition.
-  - ./verify.sh must exit 0 before this step can be marked DONE.
-
-Additional guardrails for all step files:
-- Do not assume previous steps were completed exactly as planned.
-- Provide fallback guidance when state is uncertain.
-- Do not say "use X, not Y" for version-sensitive APIs without explaining
-  how to verify X is available.
-- For any new file, class, module, route, handler, command, or piece of
-  functionality, instruct the executor to check for duplicates first.
-- If a required artifact from a prior step is absent, write the gap to
-  plans/halt-stepNN.md and stop — do not work around it or create a substitute.
+Pick a free weather API that doesn't need an API key.
 ```
 
 ### Phase 2: running the executor
@@ -608,17 +123,40 @@ What it does each run:
 
 1. Reads `CompletedSteps.md` to find the next step number `N`.
 2. Loads `plans/stepNN.md` — only that step, nothing else.
-3. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window.
-4. Runs `./verify.sh` automatically after each edit attempt (via `--auto-test`).
-5. After Aider exits, `phase2.sh` checks Aider's exit code and whether any files were modified. If Aider exited non-zero, or exited 0 with no file changes (e.g. bad API key, unreachable model), the step is not recorded and the script exits 1.
-6. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md` and commits. Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
-7. On failure: stops without touching `CompletedSteps.md` or git history.
-8. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
+3. Warns if the step file exceeds ~320 words (the planner is supposed to keep step files under 400 tokens / ~300 words; warning surfaces drift before it bites Aider's context).
+4. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window. Aider runs with `--max-reflections 3` (bounded fix loop) under a 15-minute wall-clock timeout (bounded blast radius if the model gets stuck).
+5. Runs `./verify.sh` automatically after each edit attempt (via `--auto-test`).
+6. After Aider exits, `phase2.sh` checks Aider's exit code and whether any files were modified. If Aider exited non-zero, or exited 0 with no file changes (e.g. bad API key, unreachable model), the step is not recorded and the script exits 1.
+7. **Halt detection.** If the only file the executor modified is `plans/halt-stepNN.md`, the step was halted intentionally because a required prior artifact was missing. `phase2.sh` exits **2** with a clear message and does not record the step. Review the halt report, fix the upstream gap, then re-run.
+8. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md`, commits, and appends one row to `logs/ai-routing.csv` (date, repo, step, tier, outcome, approximate diff line count). Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
+9. On failure: stops without touching `CompletedSteps.md` or git history.
+10. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| 0 | Step recorded DONE, or all steps complete |
+| 1 | Aider failure, empty diff, or `verify.sh` failed — step not recorded |
+| 2 | Step halted intentionally (`plans/halt-stepNN.md` written) — review the halt report |
 
 Notes:
+
+- `CompletedSteps.md` is committed by `phase2.sh` on every successful step (it is not gitignored). This keeps branch state self-describing.
 - `CompletedSteps.md` is written by `phase2.sh` after Aider exits, not by Aider itself. This is intentional — delegating bookkeeping to Aider is fragile because Aider can crash after verification passes but before it finishes its summarization step, leaving the step recorded as incomplete.
 - `--yes` auto-confirms file prompts so the run never hangs.
-- Each run produces exactly one commit.
+- Each successful run produces exactly one commit.
+
+#### When a step keeps failing
+
+If `phase2.sh` exits 1 on the same step twice in a row, do not just keep retrying — the step is likely underspecified or has a missing upstream artifact. Use this fallback ladder:
+
+1. **Read `plans/stepNN.log`** (and the auto-incremented `stepNN-2.log`, `stepNN-3.log`, …). Look for the actual failure: a verify.sh diagnostic, a missing import, a wrong API.
+2. **If the step depends on something that doesn't exist yet**, write a halt report yourself (`plans/halt-stepNN.md`) describing the gap, then go back to Phase 1 and add or reorder steps. Do not paper over the gap by hand-editing source.
+3. **If the step file is too vague or too large**, return to Phase 1 and rewrite or split it. The 400-token cap exists for a reason; if you're hitting it, the step is doing too much.
+4. **If two consecutive rewrites still fail**, escalate to Phase 3 / frontier review for a single targeted commit, then resume Phase 2 on the next step.
+
+If you find yourself escalating >30% of execution to cloud, the plans are not specific enough — invest more time in Phase 1.
 
 #### Alternative: running a step manually
 
@@ -661,14 +199,17 @@ fixing, say APPROVED and provide a one-paragraph commit-message summary.
 | `CLAUDE.md` | Project memory for Claude Code (committed). |
 | `CONTEXT.md` | Invariants, public contracts, do-not-touch areas (committed, always loaded by Aider). |
 | `VERIFY.md` | Repo-level definition of "done" (committed, Phase 3 reference — not loaded by executor). |
+| `PHASE1_SPEC.md` | Canonical Phase 1 planner spec (committed). The source of truth for what Phase 1 must produce. |
 | `PLAN.md` | Per-feature human-readable overview (gitignored, Phase 3 reference — not loaded by executor). |
 | `TESTS.md` | Per-feature acceptance test checklist (gitignored, Phase 3 reference — not loaded by executor). |
 | `plans/step01.md` … | Per-step executor files generated by Phase 1. Each covers one step only. Loaded one at a time by `phase2.sh`. |
+| `plans/halt-stepNN.md` | Written by the Phase 2 executor when a required prior artifact is missing. Triggers exit code 2 from `phase2.sh`. |
 | `plans/YYYY-MM-*.md` | Archive of completed feature plans. Archived automatically by `phase2.sh` when all steps complete. |
-| `phase2.sh` | Executor wrapper: finds next step, runs Aider, commits on success. |
-| `CompletedSteps.md` | Step completion log written by `phase2.sh`. Tracks which steps are DONE. |
-| `logs/ai-routing.csv` | Lightweight metrics log of where work was routed. |
+| `phase2.sh` | Executor wrapper: finds next step, runs Aider with `--max-reflections 3` under a 15-minute timeout, commits on success. |
+| `CompletedSteps.md` | Step completion log written and committed by `phase2.sh`. Tracks which steps are DONE. Committed (not gitignored) so branch state is self-describing. |
+| `logs/ai-routing.csv` | Per-step routing log appended by `phase2.sh`: date, step, tier, outcome, approximate diff line count. |
 | `docs/architecture.md` | Full architecture reference. |
+| `PHASE1_VERIFY_HELPER.md` | Stack-specific `verify.sh` quiet-log snippet (selected at scaffold time). Referenced by `PHASE1_SPEC.md` §4. |
 | `.aider.conf.yml` | Aider config (Path C defaults: local TabbyAPI, `map-tokens: 0`, `edit-format: diff`). |
 | `.aiderignore` | Files Aider must not read (secrets, env, credentials). |
 
@@ -679,4 +220,4 @@ fixing, say APPROVED and provide a one-paragraph commit-message summary.
 - Review: ~30K Claude tokens.
 - Optional fix loop: ~30K.
 
-If you find yourself escalating >30% of execution to cloud, your plans are not specific enough — invest more time in Phase 1.
+These figures are unmeasured guesses — once you have a few features through the loop, replace them with the actual numbers from `logs/ai-routing.csv`.

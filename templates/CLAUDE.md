@@ -6,16 +6,20 @@
 
 This repo uses the following handoff artifacts:
 
+- **`PHASE1_SPEC.md`** — canonical spec for Phase 1 output. Single source of truth. (committed)
 - **`PLAN.md`** — human-readable feature overview (gitignored by default; for humans and Phase 3 review)
 - **`TESTS.md`** — full acceptance test checklist (gitignored by default; for Phase 3 review)
 - **`plans/step01.md` … `stepNN.md`** — one file per step; the only plan files the executor reads
+- **`plans/halt-stepNN.md`** — written by the executor when a required prior artifact is missing; triggers exit code 2 from `phase2.sh`
 - **`CONTEXT.md`** — invariants, contracts, and do-not-change areas (committed)
 - **`VERIFY.md`** — repo-level definition of "done" (committed)
+- **`PHASE1_VERIFY_HELPER.md`** — stack-specific quiet-log snippet for `verify.sh`
+- **`CompletedSteps.md`** — step completion log written and committed by `phase2.sh` (committed, not gitignored)
 
 When you start a new feature:
 
-1. **Phase 1 (Planning, you):** Use plan mode to read the codebase, then write `PLAN.md`, `TESTS.md`, per-step files in `plans/`, and update `CONTEXT.md` if anything new emerged.
-2. **Phase 2 (Execution, local):** The user runs `./phase2.sh`, which feeds one step file at a time to Aider + local Qwen3-32B. Each run commits one step and stops.
+1. **Phase 1 (Planning, you):** Read `PHASE1_SPEC.md` and follow it exactly. Use plan mode to read the codebase, then produce the artifacts named in that spec (`PLAN.md`, `TESTS.md`, `VERIFY.md`, `verify.sh`, per-step files in `plans/`, and `CONTEXT.md` updates if anything new emerged). If the user's project inputs are sparse or ambiguous, ask before writing anything.
+2. **Phase 2 (Execution, local):** The user runs `./phase2.sh`, which feeds one step file at a time to Aider + local Qwen3-32B under `--max-reflections 3` and a 15-minute timeout. Each successful run commits one step and stops; halts produce exit code 2.
 3. **Phase 3 (Review, you):** Compare the diff to `PLAN.md`, `TESTS.md`, `CONTEXT.md`. Run `VERIFY.md`. Produce a numbered fix list or `APPROVED`.
 
 ## Routing rules
@@ -29,30 +33,34 @@ When the user asks for help, route per the architecture decision tree:
 
 ## Plan-mode prompt template
 
+The full Phase 1 specification lives in `PHASE1_SPEC.md`. The plan-mode
+prompt is a thin shell that points Claude at the spec and supplies the
+per-feature inputs. The detailed starter prompt is in `NIMBUS_GUIDE.md`;
+both this template and that one resolve to the same spec.
+
+> **Two entry points are deliberate.** `CLAUDE.md` is auto-loaded by Claude
+> Code on every session; `NIMBUS_GUIDE.md` is the human-facing onboarding
+> doc with a worked example. They share `PHASE1_SPEC.md` so policy can't
+> diverge — but if you edit either prompt shell, keep them aligned by
+> updating the spec, not by widening the shells.
+
 ```
-Don't write code yet. Read the relevant files, understand the architecture,
-and produce a numbered implementation plan for [feature/task].
+We are in Phase 1: planning and verification design only.
 
-For each step, specify:
-1. Which file(s) to modify
-2. What change to make
-3. What the change should accomplish
-4. Edge cases to handle
-5. Tests to write for that step
+Read PHASE1_SPEC.md and follow it exactly. It defines the role, allowed
+files, output schema, per-step token cap, halt semantics, and per-section
+policy. Do not deviate from it.
 
-Be specific enough that a less capable engineer (the local executor) could
-execute each step without re-reading the codebase.
+Don't write any implementation code in this session. If any project input
+below is missing or too vague to plan against, ask clarifying questions
+before writing any artifact.
 
-When done:
-- Write the full plan overview to PLAN.md (create or overwrite).
-- Write the full acceptance test checklist to TESTS.md (create or overwrite).
-- Write one file per step to plans/step01.md, step02.md, etc. Each file must
-  be self-contained (file(s) to edit, what to do, edge cases, acceptance tests
-  for that step only) and under ~400 tokens. These are the only files the
-  executor reads — PLAN.md and TESTS.md are for humans and Phase 3 review.
-- If new invariants, public contracts, or do-not-touch areas surfaced, append
-  them to CONTEXT.md.
-- Do not write any implementation code in this session.
+For verify.sh, inline the snippet from PHASE1_VERIFY_HELPER.md (which is
+already specific to this project's stack).
+
+[Then paste the FEATURE / TECH STACK / PROJECT STATE / OUTPUT-BEHAVIOR
+CONTRACT / EXTERNAL DEPENDENCIES inputs — see NIMBUS_GUIDE.md for the
+template and a worked example.]
 ```
 
 ## Review-mode prompt template
