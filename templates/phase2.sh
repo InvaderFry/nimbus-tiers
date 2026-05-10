@@ -54,6 +54,7 @@ fi
 
 echo "==> Step $NEXT: $STEP_FILE"
 
+AIDER_EXIT=0
 aider \
   --no-auto-commits \
   --read "$STEP_FILE" \
@@ -64,7 +65,20 @@ aider \
   -m "Implement exactly the step described in $STEP_FILE — nothing more. \
 Do not touch files not listed in that step. Do not refactor unrelated code. \
 Use CONTEXT.md for project invariants and do-not-change areas. \
-Run ./verify.sh to verify your changes. If it fails, fix and retry — do not stop until it passes."
+Run ./verify.sh to verify your changes. If it fails, fix and retry — do not stop until it passes." \
+  || AIDER_EXIT=$?
+
+if [ "$AIDER_EXIT" -ne 0 ]; then
+    echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
+    exit "$AIDER_EXIT"
+fi
+
+# Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
+# If no files changed, the model was never reached — do not mark the step done.
+if git diff --quiet && git diff --cached --quiet; then
+    echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+    exit 1
+fi
 
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
 # internal summarization completed. Prevents lost progress on aider crashes post-verification.
