@@ -137,7 +137,7 @@ python3 setupEnvironment.py --check-only
 cd ../my-app
 claude          # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine CONTEXT.md
 ./phase2.sh     # Phase 2: re-run until all steps DONE (one commit per step)
-claude /review  # Phase 3
+claude          # Phase 3: paste the review-mode prompt from CLAUDE.md
 ```
 
 ### Optional: install as a Python package

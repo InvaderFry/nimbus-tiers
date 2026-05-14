@@ -19,7 +19,7 @@ This repo uses the following handoff artifacts:
 When you start a new feature:
 
 1. **Phase 1 (Planning, you):** Read `PHASE1_SPEC.md` and follow it exactly. Use plan mode to read the codebase, then produce the artifacts named in that spec (`PLAN.md`, `TESTS.md`, `VERIFY.md`, `verify.sh`, per-step files in `plans/`, and `CONTEXT.md` updates if anything new emerged). If the user's project inputs are sparse or ambiguous, ask before writing anything.
-2. **Phase 2 (Execution, local):** The user runs `./phase2.sh`, which feeds one step file at a time to Aider + local Qwen3-32B under `--max-reflections 3` and a 15-minute timeout. Each successful run commits one step and stops; halts produce exit code 2.
+2. **Phase 2 (Execution, local):** The user runs `./phase2.sh`, which feeds one step file at a time to Aider + local Qwen3-32B with a 15-minute wall-clock timeout. Each successful run commits one step and stops; halts produce exit code 2.
 3. **Phase 3 (Review, you):** Compare the diff to `PLAN.md`, `TESTS.md`, `CONTEXT.md`. Run `VERIFY.md`. Produce a numbered fix list or `APPROVED`.
 
 ## Routing rules

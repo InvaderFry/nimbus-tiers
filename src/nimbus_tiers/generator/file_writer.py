@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import difflib
 import enum
+import re
 import shutil
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping
+
+_UNRESOLVED_TOKEN_RE = re.compile(r"\{\{[A-Za-z_][A-Za-z0-9_]*\}\}")
 
 
 class WriteMode(enum.Enum):
@@ -129,6 +133,12 @@ class FileWriter:
             return raw  # binary file — pass through unchanged
         for key, value in substitutions.items():
             text = text.replace("{{" + key + "}}", value)
+        remaining = _UNRESOLVED_TOKEN_RE.findall(text)
+        if remaining:
+            warnings.warn(
+                f"Unresolved template tokens in {src_path}: {sorted(set(remaining))}",
+                stacklevel=2,
+            )
         return text.encode("utf-8")
 
     def copy_tree(

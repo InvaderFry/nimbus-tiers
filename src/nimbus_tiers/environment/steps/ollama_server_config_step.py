@@ -17,6 +17,7 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_bashrc_export as _append_bashrc_export,
     read_bashrc_value,
 )
 
@@ -45,12 +46,6 @@ Setting them in WSL has no effect on the Windows Ollama process.
   After setting either way:
     Right-click the Ollama icon in the system tray → Quit, then relaunch it.\
 """
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class OllamaServerConfigStep(SetupStep):

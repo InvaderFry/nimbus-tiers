@@ -13,6 +13,7 @@ from nimbus_tiers.environment.setup_step import (
     InstallStatus,
     Prompter,
     SetupStep,
+    append_bashrc_export as _append_bashrc_export,
     read_bashrc_value,
 )
 
@@ -20,12 +21,6 @@ from nimbus_tiers.environment.setup_step import (
 TABBY_REPO = "https://github.com/theroyallab/tabbyAPI"
 DEFAULT_TABBY_PATH = "~/tabbyapi"
 TABBYAPI_URL_VAR = "TABBYAPI_URL"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class TabbyApiStep(SetupStep):

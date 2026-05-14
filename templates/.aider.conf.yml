@@ -13,7 +13,7 @@ openai-api-key: notneeded
 # For high-risk repos (auth, billing, migrations) override with
 # `auto-commits: false` in a repo-local .aider.conf.yml so you can review
 # diffs before they hit git history.
-auto-commits: true
+auto-commits: false
 auto-test: true
 test-cmd: {{TEST_CMD}}
 
