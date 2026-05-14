@@ -55,6 +55,13 @@ Logger = Callable[[str], None]
 Prompter = Callable[[str], "str | None"]
 
 
+def append_bashrc_export(var: str, value: str, rc_path: str = "~/.bashrc") -> None:
+    """Append ``export VAR="value"`` to *rc_path* (default ~/.bashrc)."""
+    path = os.path.expanduser(rc_path)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f'export {var}="{value}"\n')
+
+
 def read_bashrc_value(var: str, rc_path: str = "~/.bashrc") -> str | None:
     """Return the last exported value of *var* found in *rc_path*, or None."""
     path = os.path.expanduser(rc_path)
@@ -218,6 +225,7 @@ __all__ = [
     "SetupStep",
     "EnvVarStep",
     "Prompter",
+    "append_bashrc_export",
     "default_confirm",
     "default_prompter",
     "default_runner",

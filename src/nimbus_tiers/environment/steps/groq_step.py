@@ -11,18 +11,13 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_bashrc_export as _append_bashrc_export,
     read_bashrc_value,
 )
 
 
 GROQ_API_KEY_VAR = "GROQ_API_KEY"
 GROQ_CONSOLE_URL = "https://console.groq.com/keys"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class GroqApiKeyStep(SetupStep):

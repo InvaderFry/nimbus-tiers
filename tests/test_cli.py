@@ -136,11 +136,11 @@ def test_derive_class_name(name: str, expected: str) -> None:
 
 @pytest.mark.parametrize("stack,expected_files", [
     ("java-maven", ["pom.xml", "mvnw",
-                    "src/main/java/com/example/myproj/Application.java",
-                    "src/test/java/com/example/myproj/ApplicationTest.java",
+                    "src/main/java/com/example/myproj/MyProjApplication.java",
+                    "src/test/java/com/example/myproj/MyProjApplicationTest.java",
                     "src/main/resources/application.properties"]),
     ("java-gradle", ["build.gradle", "settings.gradle", "gradlew",
-                     "src/main/java/com/example/myproj/Application.java"]),
+                     "src/main/java/com/example/myproj/MyProjApplication.java"]),
     ("python", ["main.py", "requirements.txt", "tests/test_main.py"]),
     ("node", ["package.json", "index.js", "index.test.js"]),
 ])
@@ -162,6 +162,6 @@ def test_cli_substitutes_package_and_class_in_java_source(
 ) -> None:
     project_dir = tmp_path / "proj"
     _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "java-maven"])
-    src = (project_dir / "src/main/java/com/example/myproj/Application.java").read_text()
+    src = (project_dir / "src/main/java/com/example/myproj/MyProjApplication.java").read_text()
     assert "package com.example.myproj;" in src
     assert "class MyProjApplication" in src

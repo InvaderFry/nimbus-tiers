@@ -114,6 +114,26 @@ if command -v wc >/dev/null 2>&1; then
     fi
 fi
 
+# Section check: warn if required Phase 1 spec sections are absent.
+for _SECTION in "## Goal" "## Files to change" "## Done condition"; do
+    if ! grep -q "^${_SECTION}" "$STEP_FILE" 2>/dev/null; then
+        echo "==> WARN: $STEP_FILE missing section: '${_SECTION}'" >&2
+    fi
+done
+
+# Stack sentinel check: warn if no recognised project manifest is present.
+# Catches the case where Phase 1 ran before the stack was bootstrapped, or
+# the wrong project directory was opened.
+_SENTINEL_FOUND=false
+for _F in pom.xml build.gradle build.gradle.kts package.json requirements.txt pyproject.toml; do
+    if [ -f "$_F" ]; then _SENTINEL_FOUND=true; break; fi
+done
+if [ "$_SENTINEL_FOUND" = "false" ]; then
+    echo "==> WARN: no stack sentinel found (pom.xml / build.gradle / package.json / requirements.txt / pyproject.toml)." >&2
+    echo "    Is Phase 1 complete and the right project directory open?" >&2
+fi
+unset _SENTINEL_FOUND _F _SECTION
+
 LOG_FILE="plans/step${STEP_PAD}.log"
 if [ -f "$LOG_FILE" ]; then
     LOG_N=2
@@ -121,6 +141,18 @@ if [ -f "$LOG_FILE" ]; then
         LOG_N=$((LOG_N + 1))
     done
     LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
+fi
+
+# Guard: verify.sh must exist and be executable before Aider is invoked.
+# If Phase 1 forgot to create it, fail fast here rather than letting Aider
+# loop on a confusing --auto-test error.
+if [ ! -f ./verify.sh ]; then
+    echo "==> ERROR: verify.sh not found — Phase 1 must create it." >&2
+    exit 1
+fi
+if [ ! -x ./verify.sh ]; then
+    echo "==> ERROR: verify.sh is not executable — run: chmod +x verify.sh" >&2
+    exit 1
 fi
 
 # Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally

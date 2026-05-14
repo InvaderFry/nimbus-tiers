@@ -69,8 +69,8 @@ def test_full_hybrid_includes_stack_file(stack: str, expected_dest: str) -> None
 def test_full_hybrid_java_maven_application_dest_uses_package_name() -> None:
     specs = FullHybridPath(stack="java-maven", package_name="myapp").template_files()
     dests = {str(s.dest_relative) for s in specs}
-    assert "src/main/java/com/example/myapp/Application.java" in dests
-    assert "src/test/java/com/example/myapp/ApplicationTest.java" in dests
+    assert "src/main/java/com/example/myapp/AppApplication.java" in dests
+    assert "src/test/java/com/example/myapp/AppApplicationTest.java" in dests
 
 
 def test_full_hybrid_no_duplicate_destinations() -> None:
@@ -127,7 +127,7 @@ def test_setup_path_post_copy_hooks_default_noop(tmp_path: Path) -> None:
 
 def test_full_hybrid_unknown_stack_raises() -> None:
     with pytest.raises(ValueError, match="Unsupported stack"):
-        FullHybridPath(stack="ruby")._stack_template_files()
+        FullHybridPath(stack="ruby")
 
 
 @pytest.mark.parametrize("filename", ["Application.java", "ApplicationTest.java", "application.properties"])

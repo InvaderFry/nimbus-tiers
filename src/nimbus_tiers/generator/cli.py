@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  cd {project_path}")
         print("  claude            # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine CONTEXT.md")
         print("  ./phase2.sh       # Phase 2: re-run until all steps DONE (one commit per step)")
-        print("  claude /review    # Phase 3: review the diff against PLAN.md")
+        print("  claude            # Phase 3: paste the review-mode prompt from CLAUDE.md")
 
     return 0
 

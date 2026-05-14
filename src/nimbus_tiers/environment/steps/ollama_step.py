@@ -12,18 +12,13 @@ from nimbus_tiers.environment.setup_step import (
     InstallStatus,
     Prompter,
     SetupStep,
+    append_bashrc_export as _append_bashrc_export,
     read_bashrc_value,
 )
 
 
 OLLAMA_INSTALL_CMD = "curl -fsSL https://ollama.com/install.sh | sh"
 OLLAMA_HOST_VAR = "OLLAMA_HOST"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class OllamaStep(SetupStep):
