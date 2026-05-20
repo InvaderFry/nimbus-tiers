@@ -295,6 +295,14 @@ Additional guardrails for all step files:
 - If a required artifact from a prior step is absent, write the gap to
   `plans/halt-stepNN.md` and stop — do not work around it or create a
   substitute.
+- **Write all instructions in idempotent "ensure" form, not assertive
+  "confirm not present" form.** The executor may re-run a step against
+  already-modified files (e.g. after a Ctrl+C or timeout mid-run).
+  Instructions like "confirm X is NOT already present" cause the model to
+  loop when X already exists. Instructions like "ensure X is present; add
+  it if missing, otherwise leave it unchanged" are safe whether or not the
+  change has already been applied. This applies to dependencies, imports,
+  class definitions, configuration blocks, and any other additive change.
 
 ---
 
@@ -316,7 +324,9 @@ keyless public API and returns a typed reading.
   plans/halt-step03.md and stop.
 - Check whether a WeatherService already exists in that package. If
   yes, update it; do not create a duplicate.
-- Confirm pom.xml declares spring-web. If not, halt.
+- Ensure pom.xml declares the spring-web dependency; add it if missing,
+  leave it unchanged if already present. If pom.xml does not exist at
+  all, write the gap to plans/halt-step03.md and stop.
 
 ## Files to change
 - src/main/java/com/example/weather/WeatherService.java (create if missing)
