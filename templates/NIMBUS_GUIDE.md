@@ -14,7 +14,14 @@ See [`docs/architecture.md`](./docs/architecture.md) for the full reference. The
 
 ## Per-feature workflow
 
+Phase 1 artifacts and Phase 2 commits all land on a feature branch; master
+stays clean until Phase 3 signs off.
+
 ```bash
+# Pre-flight — create your feature branch
+git checkout master               # start from the clean baseline
+git checkout -b feature/<name>    # all phase commits land here
+
 # Phase 1 — plan in Claude Code
 claude            # paste the Phase 1 starter prompt below, then iterate
 
@@ -25,7 +32,9 @@ claude            # paste the Phase 1 starter prompt below, then iterate
 git log --oneline   # copy the hash of the last commit before execution started
 claude              # paste the Phase 3 starter prompt below, filling in that hash
 
-# Final gate — run VERIFY.md before merge
+# Merge — only after Phase 3 returns APPROVED
+git checkout master
+git merge --ff-only feature/<name>
 ```
 
 ### Phase 1 starter prompt

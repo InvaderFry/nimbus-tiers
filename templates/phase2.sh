@@ -9,6 +9,14 @@
 #   2  step halted intentionally (plans/halt-stepNN.md written) — review halt report
 set -euo pipefail
 
+# Refuse to run on master/main — all phase commits must land on a feature branch.
+_CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")
+if [[ "$_CURRENT_BRANCH" == "master" || "$_CURRENT_BRANCH" == "main" ]]; then
+    echo "ERROR: phase2.sh must not run on '$_CURRENT_BRANCH'."
+    echo "Create a feature branch first: git checkout -b feature/<name>"
+    exit 1
+fi
+
 NEXT=$(python3 -c "
 import re, os
 done = set()
