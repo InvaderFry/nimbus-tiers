@@ -158,21 +158,32 @@ if [ -z "$_PREFLIGHT_MODEL" ] && [ -f ".aider.conf.yml" ]; then
 fi
 
 if [ -n "$_PREFLIGHT_MODEL" ]; then
+    # Read openai-api-key / openai-api-base from .aider.conf.yml as fallbacks
+    # so the preflight check mirrors what aider itself sees at runtime.
+    _PREFLIGHT_API_KEY="${OPENAI_API_KEY:-}"
+    _PREFLIGHT_BASE_URL="${OPENAI_BASE_URL:-}"
+    if [ -f ".aider.conf.yml" ]; then
+        [ -z "$_PREFLIGHT_API_KEY" ] && _PREFLIGHT_API_KEY=$(grep -m1 '^openai-api-key:' .aider.conf.yml 2>/dev/null \
+            | sed "s/^openai-api-key:[[:space:]]*//" | tr -d '"'"'" || true)
+        [ -z "$_PREFLIGHT_BASE_URL" ] && _PREFLIGHT_BASE_URL=$(grep -m1 '^openai-api-base:' .aider.conf.yml 2>/dev/null \
+            | sed "s/^openai-api-base:[[:space:]]*//" | tr -d '"'"'" || true)
+    fi
+
     case "$_PREFLIGHT_MODEL" in
         openai/*|gpt-*|o1*|o3*)
             # OpenAI-compatible model: needs an API key or a local base URL.
-            if [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${OPENAI_BASE_URL:-}" ]; then
-                echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires OPENAI_API_KEY or OPENAI_BASE_URL to be set. Aborting."
+            if [ -z "$_PREFLIGHT_API_KEY" ] && [ -z "$_PREFLIGHT_BASE_URL" ]; then
+                echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires OPENAI_API_KEY or OPENAI_BASE_URL to be set (or openai-api-key / openai-api-base in .aider.conf.yml). Aborting."
                 exit 1
             fi
             # If pointing at a local server, verify it is actually reachable before
             # handing control to aider (which would otherwise hang on retries).
-            if [ -n "${OPENAI_BASE_URL:-}" ] && command -v curl >/dev/null 2>&1; then
+            if [ -n "$_PREFLIGHT_BASE_URL" ] && command -v curl >/dev/null 2>&1; then
                 _AUTH_HEADER=()
-                [ -n "${OPENAI_API_KEY:-}" ] && _AUTH_HEADER=(-H "Authorization: Bearer ${OPENAI_API_KEY}")
-                if ! curl -sf --max-time 5 "${OPENAI_BASE_URL%/}/models" \
+                [ -n "$_PREFLIGHT_API_KEY" ] && _AUTH_HEADER=(-H "Authorization: Bearer ${_PREFLIGHT_API_KEY}")
+                if ! curl -sf --max-time 5 "${_PREFLIGHT_BASE_URL%/}/models" \
                      "${_AUTH_HEADER[@]}" -o /dev/null 2>/dev/null; then
-                    echo "==> ERROR: local model server at '${OPENAI_BASE_URL}' is not reachable. Aborting."
+                    echo "==> ERROR: local model server at '${_PREFLIGHT_BASE_URL}' is not reachable. Aborting."
                     exit 1
                 fi
             fi
