@@ -197,59 +197,82 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
     esac
 fi
 
-AIDER_EXIT=0
-set +e
-"${TIMEOUT_CMD[@]}" aider \
-  --no-auto-commits \
-  --no-show-model-warnings \
-  --read "$STEP_FILE" \
-  --read CONTEXT.md \
-  --test-cmd "./verify.sh" \
-  --auto-test \
-  --yes \
-  -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
-  2>&1 | tee "$LOG_FILE"
-AIDER_EXIT="${PIPESTATUS[0]}"
-set -e
-
-if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
-    echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
-    exit 1
+# Pre-flight: if uncommitted changes already exist (e.g. an interrupted prior
+# run left the tree modified), check whether the step is already done before
+# invoking Aider. If verify.sh passes now, skip Aider entirely and go straight
+# to record-and-commit — avoids re-feeding an already-patched file to a model
+# told to add something "not yet present", which causes a spin loop.
+SKIP_AIDER=false
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "==> Uncommitted changes detected — running pre-flight verify (interrupted-run recovery check)..."
+    PREFLIGHT_EXIT=0
+    set +e
+    ./verify.sh 2>&1 | tee "$LOG_FILE"
+    PREFLIGHT_EXIT="${PIPESTATUS[0]}"
+    set -e
+    if [ "$PREFLIGHT_EXIT" -eq 0 ]; then
+        echo "==> Pre-flight verify passed — step $NEXT appears already complete. Skipping Aider."
+        SKIP_AIDER=true
+    else
+        echo "==> Pre-flight verify failed — proceeding with Aider."
+    fi
 fi
 
-if [ "$AIDER_EXIT" -ne 0 ]; then
-    echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
-    exit "$AIDER_EXIT"
-fi
+if [ "$SKIP_AIDER" = false ]; then
+    AIDER_EXIT=0
+    set +e
+    "${TIMEOUT_CMD[@]}" aider \
+      --no-auto-commits \
+      --no-show-model-warnings \
+      --read "$STEP_FILE" \
+      --read CONTEXT.md \
+      --test-cmd "./verify.sh" \
+      --auto-test \
+      --yes \
+      -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
+      2>&1 | tee "$LOG_FILE"
+    AIDER_EXIT="${PIPESTATUS[0]}"
+    set -e
 
-# Halt detection: if the executor produced or modified plans/halt-stepNN.md
-# during this run, it intentionally stopped because a required prior artifact
-# was missing. Treat the halt file's dirty status as authoritative — partial
-# edits in other files MUST NOT be committed as DONE. We commit only the halt
-# report (so it survives across retries) and discard any other in-tree changes.
-# Exit 2 so the caller can distinguish a halt from a verify.sh failure.
-#
-# `git status --porcelain -- <path>` returns a non-empty line iff the path is
-# untracked, modified, or staged. A halt file committed in a previous run
-# would be clean, so this check fires only for halts produced *this run*.
-if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
-    echo "==> Step $NEXT halted: $HALT_FILE was written by the executor."
-    echo "    Discarding any unrelated in-tree changes from this run."
-    echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
-    git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
-    git add -- "$HALT_FILE"                       # restage only the halt file
-    git commit -m "Step $NEXT: HALT (missing prior artifact)"
-    git checkout -- . 2>/dev/null || true         # discard tracked-file edits
-    git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
-    log_routing "step-${STEP_PAD}" "false" "0" "halted"
-    exit 2
-fi
+    if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
+        echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
+        exit 1
+    fi
 
-# Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
-# If no files changed, the model was never reached — do not mark the step done.
-if git diff --quiet && git diff --cached --quiet; then
-    echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
-    exit 1
+    if [ "$AIDER_EXIT" -ne 0 ]; then
+        echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
+        exit "$AIDER_EXIT"
+    fi
+
+    # Halt detection: if the executor produced or modified plans/halt-stepNN.md
+    # during this run, it intentionally stopped because a required prior artifact
+    # was missing. Treat the halt file's dirty status as authoritative — partial
+    # edits in other files MUST NOT be committed as DONE. We commit only the halt
+    # report (so it survives across retries) and discard any other in-tree changes.
+    # Exit 2 so the caller can distinguish a halt from a verify.sh failure.
+    #
+    # `git status --porcelain -- <path>` returns a non-empty line iff the path is
+    # untracked, modified, or staged. A halt file committed in a previous run
+    # would be clean, so this check fires only for halts produced *this run*.
+    if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
+        echo "==> Step $NEXT halted: $HALT_FILE was written by the executor."
+        echo "    Discarding any unrelated in-tree changes from this run."
+        echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
+        git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
+        git add -- "$HALT_FILE"                       # restage only the halt file
+        git commit -m "Step $NEXT: HALT (missing prior artifact)"
+        git checkout -- . 2>/dev/null || true         # discard tracked-file edits
+        git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
+        log_routing "step-${STEP_PAD}" "false" "0" "halted"
+        exit 2
+    fi
+
+    # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
+    # If no files changed, the model was never reached — do not mark the step done.
+    if git diff --quiet && git diff --cached --quiet; then
+        echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+        exit 1
+    fi
 fi
 
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
