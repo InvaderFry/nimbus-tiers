@@ -237,7 +237,7 @@ if [ "$SKIP_AIDER" = false ]; then
       --auto-test \
       --yes \
       -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
-      2>&1 | tee "$LOG_FILE"
+      2>&1 | tee -a "$LOG_FILE"
     AIDER_EXIT="${PIPESTATUS[0]}"
     set -e
 
