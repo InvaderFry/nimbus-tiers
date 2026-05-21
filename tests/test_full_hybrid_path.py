@@ -50,6 +50,10 @@ def test_full_hybrid_ships_stack_specific_verify_helper(stack: str) -> None:
 @pytest.mark.parametrize("stack,expected_dest", [
     ("java-maven", "pom.xml"),
     ("java-maven", "mvnw"),
+    (
+        "java-maven",
+        "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker",
+    ),
     ("java-maven", "src/main/resources/application.properties"),
     ("java-gradle", "build.gradle"),
     ("java-gradle", "settings.gradle"),
