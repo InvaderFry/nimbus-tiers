@@ -86,6 +86,14 @@ class FullHybridPath(SetupPath):
                 return java_common + [
                     TemplateSpec(Path("stacks/java-maven/pom.xml"), Path("pom.xml")),
                     TemplateSpec(Path("stacks/java-maven/mvnw"), Path("mvnw")),
+                    TemplateSpec(
+                        Path(
+                            "stacks/java-maven/mockito-extensions/org.mockito.plugins.MockMaker"
+                        ),
+                        Path(
+                            "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker"
+                        ),
+                    ),
                 ]
             else:
                 return java_common + [
