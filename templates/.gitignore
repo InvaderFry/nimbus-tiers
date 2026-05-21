@@ -35,6 +35,9 @@ node_modules/
 .next/
 .turbo/
 
+# Common Java artifacts (delete this block if your project isn't Java/Maven or Java/Gradle).
+target/
+
 # OS / IDE
 .DS_Store
 Thumbs.db
