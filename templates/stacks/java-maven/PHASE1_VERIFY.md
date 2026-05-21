@@ -31,4 +31,9 @@ Notes:
 - The filter preserves application-startup failures, errors, "Caused by"
   chains, missing-bean diagnostics, and `BUILD FAILURE` — everything else
   is dropped.
+- If tests fail with a Mockito/Byte Buddy self-attach error in restricted
+  environments (common in WSL/containers), add
+  `src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker`
+  with content `mock-maker-subclass` unless inline mocking is explicitly
+  required.
 - Do not paste this helper into a non-Maven project's `verify.sh`.
