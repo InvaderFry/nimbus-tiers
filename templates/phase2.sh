@@ -271,6 +271,7 @@ if [ "$SKIP_AIDER" = false ]; then
         git checkout -- . 2>/dev/null || true         # discard tracked-file edits
         git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
         log_routing "step-${STEP_PAD}" "false" "0" "halted"
+        rm -f "$WIP_FILE"
         exit 2
     fi
 
