@@ -55,7 +55,17 @@ else
         rm -f "$LOCK_PID_FILE" 2>/dev/null || true
         rm -f "$LOCK_START_FILE" 2>/dev/null || true
         rmdir "$LOCK_DIR" 2>/dev/null || true
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
+        # Two recovery attempts racing for the same stale lock can collide on the
+        # re-mkdir. Retry with a short backoff so the loser doesn't falsely abort.
+        LOCK_REACQUIRED=false
+        for _attempt in 1 2 3; do
+            if mkdir "$LOCK_DIR" 2>/dev/null; then
+                LOCK_REACQUIRED=true
+                break
+            fi
+            sleep 1
+        done
+        if [ "$LOCK_REACQUIRED" = true ]; then
             printf '%s\n' "$$" > "$LOCK_PID_FILE"
             get_proc_start_time "$$" > "$LOCK_START_FILE" 2>/dev/null || true
         else
@@ -78,10 +88,18 @@ cleanup_lock() {
 }
 trap cleanup_lock EXIT INT TERM
 
-# Refuse to run on master/main — all phase commits must land on a feature branch.
+# Refuse to run on master/main or in detached HEAD — all phase commits must
+# land on a named feature branch so they are visible to `git branch` and to
+# the post-Phase-3 merge step.
 _CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")
 if [[ "$_CURRENT_BRANCH" == "master" || "$_CURRENT_BRANCH" == "main" ]]; then
     echo "ERROR: phase2.sh must not run on '$_CURRENT_BRANCH'."
+    echo "Create a feature branch first: git checkout -b feature/<name>"
+    exit 1
+fi
+if [[ "$_CURRENT_BRANCH" == "detached" ]]; then
+    echo "ERROR: phase2.sh must not run in detached HEAD state."
+    echo "Commits made here would be unreachable from any branch."
     echo "Create a feature branch first: git checkout -b feature/<name>"
     exit 1
 fi
@@ -220,6 +238,14 @@ fi
 # ── Preflight: fail fast if the model endpoint / API key is unavailable ───────
 # Derive model from env first, then from .aider.conf.yml so the check works
 # whether the user sets AIDER_MODEL or relies on the config file.
+#
+# .aider.conf.yml parsing subset: this is a `grep | sed | tr` reader, not a
+# YAML parser. It only recognizes top-level scalar lines of the form
+#     key: value          or          key: "value"          or          key: 'value'
+# with the key starting at column 0. Quoted multi-line values, anchors, flow
+# style, comments on the same line, and indented entries are NOT supported.
+# Aider itself parses the full YAML, so a value outside this subset will still
+# work at runtime — only the preflight check will skip it.
 _PREFLIGHT_MODEL="${AIDER_MODEL:-}"
 if [ -z "$_PREFLIGHT_MODEL" ] && [ -f ".aider.conf.yml" ]; then
     _PREFLIGHT_MODEL=$(grep -m1 '^model:' .aider.conf.yml 2>/dev/null \
@@ -277,6 +303,27 @@ fi
 # kill signal including SIGKILL.
 WIP_FILE=".git/phase2-wip-step${STEP_PAD}"
 
+# Refuse to start with a dirty working tree (unless a WIP sentinel signals an
+# interrupted prior run for this exact step). The commit at the bottom uses
+# `git add -A`, so any unrelated uncommitted edits would be swept into the
+# step commit and silently violate the one-step-per-commit contract that
+# Phase 3 review depends on. Build-artifact directories are excluded so a
+# previous test invocation doesn't block the next run.
+if [ ! -f "$WIP_FILE" ]; then
+    DIRTY=$(git status --porcelain 2>/dev/null \
+        | grep -Ev '^.. (target/|build/|\.gradle/|node_modules/|dist/|out/)' \
+        || true)
+    if [ -n "$DIRTY" ]; then
+        echo "ERROR: working tree has uncommitted changes (and no interrupted-run sentinel)."
+        echo "       Commit, stash, or discard them before running phase2.sh — otherwise they"
+        echo "       would be swept into the step commit by 'git add -A'."
+        echo ""
+        echo "Offending paths:"
+        printf '%s\n' "$DIRTY" | sed 's/^/  /'
+        exit 1
+    fi
+fi
+
 SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
@@ -296,22 +343,58 @@ fi
 if [ "$SKIP_AIDER" = false ]; then
     # Parse "## Files to change" from the step file and pass each existing file
     # as --file so Aider sees the real content instead of hallucinating SEARCH blocks.
+    # Accept formats produced by PHASE1_SPEC.md examples:
+    #   - path/to/file
+    #   - path/to/file (create if missing)
+    #   - `path/to/file`
+    #   - "path/to/file"
+    # The parenthetical annotation is dropped; one layer of wrapping backticks
+    # or quotes is stripped. Paths with embedded spaces are not supported (the
+    # spec examples never use them and bash word-splitting would complicate the
+    # --file plumbing); such paths are skipped with a warning.
     FILE_ARGS=()
+    PARSED_PATHS=()
     while IFS= read -r f; do
-        path="${f#- }"          # strip leading "- "
-        path="${path%% *}"      # drop any trailing annotation like "(create if missing)"
-        [ -f "$path" ] && FILE_ARGS+=("--file" "$path")
+        path="${f#- }"                              # strip leading "- "
+        path="${path%%(*}"                           # drop trailing parenthetical annotation
+        # trim trailing whitespace
+        path="${path%"${path##*[![:space:]]}"}"
+        # strip one layer of wrapping backticks / quotes
+        path="${path#\`}"; path="${path%\`}"
+        path="${path#\"}"; path="${path%\"}"
+        path="${path#\'}"; path="${path%\'}"
+        [ -z "$path" ] && continue
+        case "$path" in
+            *" "*)
+                echo "==> WARN: skipping path with embedded space: $path" >&2
+                continue
+                ;;
+        esac
+        PARSED_PATHS+=("$path")
+        if [ -f "$path" ]; then
+            FILE_ARGS+=("--file" "$path")
+        fi
     done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+
+    if [ "${#PARSED_PATHS[@]}" -eq 0 ]; then
+        echo "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." >&2
+        echo "    Aider will run without explicit --file args and may hallucinate SEARCH blocks." >&2
+    elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
+        echo "==> WARN: '## Files to change' lists ${#PARSED_PATHS[@]} path(s) but none exist on disk yet." >&2
+        echo "    Aider will create them from scratch; if existing files were intended, check the step file." >&2
+    fi
 
     touch "$WIP_FILE"
     AIDER_EXIT=0
     set +e
-    "${TIMEOUT_CMD[@]}" aider \
+    # ${arr[@]+"${arr[@]}"} expands to nothing when the array is empty without
+    # tripping `set -u` on bash < 4.4 (still default on macOS).
+    "${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"}" aider \
       --no-auto-commits \
       --no-show-model-warnings \
       --read "$STEP_FILE" \
       --read CONTEXT.md \
-      "${FILE_ARGS[@]}" \
+      ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
       --test-cmd "./verify.sh" \
       --auto-test \
       --yes \
