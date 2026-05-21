@@ -9,6 +9,44 @@
 #   2  step halted intentionally (plans/halt-stepNN.md written) — review halt report
 set -euo pipefail
 
+# Single-run guard: prevent concurrent phase2.sh executions in the same repo.
+# A second run can race bookkeeping and produce confusing sentinel recovery.
+LOCK_DIR=".git/phase2.lock"
+LOCK_PID_FILE="${LOCK_DIR}/pid"
+if mkdir "$LOCK_DIR" 2>/dev/null; then
+    printf '%s\n' "$$" > "$LOCK_PID_FILE"
+else
+    LOCK_OWNER_PID=""
+    if [ -f "$LOCK_PID_FILE" ]; then
+        LOCK_OWNER_PID=$(tr -cd '0-9' < "$LOCK_PID_FILE" 2>/dev/null || true)
+    fi
+
+    # Auto-recover stale lock when owner PID is gone (e.g. SIGKILL/host crash).
+    if [ -n "$LOCK_OWNER_PID" ] && ! kill -0 "$LOCK_OWNER_PID" 2>/dev/null; then
+        echo "==> Recovering stale phase2 lock from dead PID ${LOCK_OWNER_PID}."
+        rm -f "$LOCK_PID_FILE" 2>/dev/null || true
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            printf '%s\n' "$$" > "$LOCK_PID_FILE"
+        else
+            echo "ERROR: phase2 lock could not be recovered. Remove $LOCK_DIR and retry."
+            exit 1
+        fi
+    else
+        echo "ERROR: another phase2.sh run is already active for this repository."
+        if [ -n "$LOCK_OWNER_PID" ]; then
+            echo "Lock owner PID: $LOCK_OWNER_PID"
+        fi
+        echo "If that run crashed, remove $LOCK_DIR and retry."
+        exit 1
+    fi
+fi
+cleanup_lock() {
+    rm -f "$LOCK_PID_FILE" 2>/dev/null || true
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+trap cleanup_lock EXIT
+
 # Refuse to run on master/main — all phase commits must land on a feature branch.
 _CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")
 if [[ "$_CURRENT_BRANCH" == "master" || "$_CURRENT_BRANCH" == "main" ]]; then

@@ -136,10 +136,12 @@ What it does each run:
 4. Calls Aider; `map-tokens: 0` and `edit-format: diff` are applied automatically from `.aider.conf.yml` to stay within the 10K token context window. Aider runs with `--max-reflections 3` (bounded fix loop) under a 15-minute wall-clock timeout (bounded blast radius if the model gets stuck).
 5. Runs `./verify.sh` automatically after each edit attempt (via `--auto-test`).
 6. After Aider exits, `phase2.sh` checks Aider's exit code and whether any files were modified. If Aider exited non-zero, or exited 0 with no file changes (e.g. bad API key, unreachable model), the step is not recorded and the script exits 1.
-7. **Halt detection.** If the only file the executor modified is `plans/halt-stepNN.md`, the step was halted intentionally because a required prior artifact was missing. `phase2.sh` exits **2** with a clear message and does not record the step. Review the halt report, fix the upstream gap, then re-run.
-8. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md`, commits, and appends one row to `logs/ai-routing.csv` (date, repo, step, tier, outcome, approximate diff line count). Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
-9. On failure: stops without touching `CompletedSteps.md` or git history.
-10. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
+7. **Single-run lock.** `phase2.sh` acquires `.git/phase2.lock` at startup and exits early if another run is already active. This avoids concurrent execution races around sentinels and step bookkeeping.
+   - If the lock owner PID is no longer alive (for example, after a host crash or `SIGKILL`), `phase2.sh` auto-recovers the stale lock and continues.
+8. **Halt detection.** If the only file the executor modified is `plans/halt-stepNN.md`, the step was halted intentionally because a required prior artifact was missing. `phase2.sh` exits **2** with a clear message and does not record the step. Review the halt report, fix the upstream gap, then re-run.
+9. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md`, commits, and appends one row to `logs/ai-routing.csv` (date, repo, step, tier, outcome, approximate diff line count). Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
+10. On failure: stops without touching `CompletedSteps.md` or git history.
+11. On the final run (no more step files): removes `plans/step*.md`, archives `PLAN.md` to `plans/YYYY-MM-<branch>.md`, and commits both in one go.
 
 Exit codes:
 
@@ -164,6 +166,11 @@ If `phase2.sh` exits 1 on the same step twice in a row, do not just keep retryin
 2. **If the step depends on something that doesn't exist yet**, write a halt report yourself (`plans/halt-stepNN.md`) describing the gap, then go back to Phase 1 and add or reorder steps. Do not paper over the gap by hand-editing source.
 3. **If the step file is too vague or too large**, return to Phase 1 and rewrite or split it. The 400-token cap exists for a reason; if you're hitting it, the step is doing too much.
 4. **If two consecutive rewrites still fail**, escalate to Phase 3 / frontier review for a single targeted commit, then resume Phase 2 on the next step.
+
+Java/Maven note: if `verify.sh` fails with Mockito/Byte Buddy self-attach errors
+in WSL/containers, add
+`src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker` with
+`mock-maker-subclass` (unless your tests explicitly require inline mocking).
 
 If you find yourself escalating >30% of execution to cloud, the plans are not specific enough — invest more time in Phase 1.
 
