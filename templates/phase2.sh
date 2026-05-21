@@ -13,23 +13,53 @@ set -euo pipefail
 # A second run can race bookkeeping and produce confusing sentinel recovery.
 LOCK_DIR=".git/phase2.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
+LOCK_START_FILE="${LOCK_DIR}/starttime"
+get_proc_start_time() {
+    # Linux procfs start time (clock ticks since boot), field 22 in /proc/<pid>/stat.
+    # Empty output means unavailable (non-Linux, vanished process, or inaccessible procfs).
+    local pid="$1"
+    [ -r "/proc/${pid}/stat" ] || return 1
+    awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || return 1
+}
 if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_PID_FILE"
+    get_proc_start_time "$$" > "$LOCK_START_FILE" 2>/dev/null || true
 else
     LOCK_OWNER_PID=""
+    LOCK_OWNER_START=""
+    CURRENT_OWNER_START=""
     if [ -f "$LOCK_PID_FILE" ]; then
         LOCK_OWNER_PID=$(tr -cd '0-9' < "$LOCK_PID_FILE" 2>/dev/null || true)
     fi
+    if [ -f "$LOCK_START_FILE" ]; then
+        LOCK_OWNER_START=$(tr -cd '0-9' < "$LOCK_START_FILE" 2>/dev/null || true)
+    fi
+    if [ -n "$LOCK_OWNER_PID" ]; then
+        CURRENT_OWNER_START=$(get_proc_start_time "$LOCK_OWNER_PID" 2>/dev/null || true)
+    fi
 
-    # Auto-recover stale lock when owner PID is gone (e.g. SIGKILL/host crash).
-    if [ -n "$LOCK_OWNER_PID" ] && ! kill -0 "$LOCK_OWNER_PID" 2>/dev/null; then
-        echo "==> Recovering stale phase2 lock from dead PID ${LOCK_OWNER_PID}."
+    # Auto-recover stale lock when owner PID is gone or does not match recorded starttime
+    # (PID reuse after crash). If starttime is unavailable, fallback to PID liveness only.
+    STALE_LOCK=false
+    if [ -n "$LOCK_OWNER_PID" ]; then
+        if ! kill -0 "$LOCK_OWNER_PID" 2>/dev/null; then
+            STALE_LOCK=true
+            echo "==> Recovering stale phase2 lock from dead PID ${LOCK_OWNER_PID}."
+        elif [ -n "$LOCK_OWNER_START" ] && [ -n "$CURRENT_OWNER_START" ] && [ "$LOCK_OWNER_START" != "$CURRENT_OWNER_START" ]; then
+            STALE_LOCK=true
+            echo "==> Recovering stale phase2 lock from reused PID ${LOCK_OWNER_PID} (starttime mismatch)."
+        fi
+    fi
+
+    if [ "$STALE_LOCK" = true ]; then
         rm -f "$LOCK_PID_FILE" 2>/dev/null || true
+        rm -f "$LOCK_START_FILE" 2>/dev/null || true
         rmdir "$LOCK_DIR" 2>/dev/null || true
         if mkdir "$LOCK_DIR" 2>/dev/null; then
             printf '%s\n' "$$" > "$LOCK_PID_FILE"
+            get_proc_start_time "$$" > "$LOCK_START_FILE" 2>/dev/null || true
         else
-            echo "ERROR: phase2 lock could not be recovered. Remove $LOCK_DIR and retry."
+            echo "ERROR: phase2 lock could not be recovered. Remove $LOCK_DIR (and any orphan files inside) and retry."
             exit 1
         fi
     else
@@ -43,9 +73,10 @@ else
 fi
 cleanup_lock() {
     rm -f "$LOCK_PID_FILE" 2>/dev/null || true
+    rm -f "$LOCK_START_FILE" 2>/dev/null || true
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
-trap cleanup_lock EXIT
+trap cleanup_lock EXIT INT TERM
 
 # Refuse to run on master/main — all phase commits must land on a feature branch.
 _CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "detached")

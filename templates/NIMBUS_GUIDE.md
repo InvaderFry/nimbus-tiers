@@ -137,7 +137,8 @@ What it does each run:
 5. Runs `./verify.sh` automatically after each edit attempt (via `--auto-test`).
 6. After Aider exits, `phase2.sh` checks Aider's exit code and whether any files were modified. If Aider exited non-zero, or exited 0 with no file changes (e.g. bad API key, unreachable model), the step is not recorded and the script exits 1.
 7. **Single-run lock.** `phase2.sh` acquires `.git/phase2.lock` at startup and exits early if another run is already active. This avoids concurrent execution races around sentinels and step bookkeeping.
-   - If the lock owner PID is no longer alive (for example, after a host crash or `SIGKILL`), `phase2.sh` auto-recovers the stale lock and continues.
+   - Lock ownership is tracked with both PID and proc start time to avoid PID-reuse false positives.
+   - If the lock owner is no longer alive (for example, after a host crash or `SIGKILL`) or PID/start-time no longer match, `phase2.sh` auto-recovers the stale lock and continues.
 8. **Halt detection.** If the only file the executor modified is `plans/halt-stepNN.md`, the step was halted intentionally because a required prior artifact was missing. `phase2.sh` exits **2** with a clear message and does not record the step. Review the halt report, fix the upstream gap, then re-run.
 9. If both guards pass, `phase2.sh` re-runs `./verify.sh` itself. On success it appends `Step N: DONE` to `CompletedSteps.md`, commits, and appends one row to `logs/ai-routing.csv` (date, repo, step, tier, outcome, approximate diff line count). Bookkeeping is owned by the shell, not Aider — so a crash in Aider's internal summarization step cannot lose progress.
 10. On failure: stops without touching `CompletedSteps.md` or git history.
