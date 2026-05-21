@@ -225,6 +225,15 @@ if [ -f "$WIP_FILE" ]; then
 fi
 
 if [ "$SKIP_AIDER" = false ]; then
+    # Parse "## Files to change" from the step file and pass each existing file
+    # as --file so Aider sees the real content instead of hallucinating SEARCH blocks.
+    FILE_ARGS=()
+    while IFS= read -r f; do
+        path="${f#- }"          # strip leading "- "
+        path="${path%% *}"      # drop any trailing annotation like "(create if missing)"
+        [ -f "$path" ] && FILE_ARGS+=("--file" "$path")
+    done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+
     touch "$WIP_FILE"
     AIDER_EXIT=0
     set +e
@@ -233,6 +242,7 @@ if [ "$SKIP_AIDER" = false ]; then
       --no-show-model-warnings \
       --read "$STEP_FILE" \
       --read CONTEXT.md \
+      "${FILE_ARGS[@]}" \
       --test-cmd "./verify.sh" \
       --auto-test \
       --yes \
