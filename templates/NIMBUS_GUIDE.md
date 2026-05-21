@@ -179,9 +179,9 @@ uses an explicit sentinel file at `.git/phase2-wip-stepNN` instead. If you are
 upgrading mid-feature and the new `phase2.sh` refuses to start because the tree
 is dirty, commit/stash/discard the unrelated changes and re-run. If your tree
 is dirty *because* a prior run was interrupted, recreate the sentinel manually
-with `touch .git/phase2-wip-step$(printf '%02d' <N>)` (where `<N>` is the next
-step number), then re-run — `phase2.sh` will pre-flight verify and skip Aider
-if the step is already complete.
+for the next step (e.g. for step 3: `touch .git/phase2-wip-step03`), then
+re-run — `phase2.sh` will pre-flight verify and skip Aider if the step is
+already complete.
 
 Aider config note: `phase2.sh` reads `model`, `openai-api-key`, and
 `openai-api-base` from `.aider.conf.yml` for its preflight reachability check.
