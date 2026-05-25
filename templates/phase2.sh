@@ -417,9 +417,10 @@ if [ "$SKIP_AIDER" = false ]; then
         --yes \
         -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
         2>&1 | tee -a "$LOG_FILE"
-      _aider_rc="${PIPESTATUS[0]}"
-      _tee_rc="${PIPESTATUS[1]}"
-      if [ "${_tee_rc:-0}" -ne 0 ]; then
+      _ps=("${PIPESTATUS[@]}")
+      _aider_rc="${_ps[0]}"
+      _tee_rc="${_ps[1]:-0}"
+      if [ "$_tee_rc" -ne 0 ]; then
         echo "==> WARN: tee failed writing $LOG_FILE (exit ${_tee_rc} — disk full?)" >&2
       fi
       exit "$_aider_rc"
