@@ -315,7 +315,7 @@ _COMMIT_EXCLUDES=("${_BUILD_EXCLUDES[@]}" ':!plans/*.log')
 # interrupted prior run for this step. Without this guard the bottom-of-script
 # `git add -A` would silently sweep unrelated edits into the step commit.
 if [ ! -f "$WIP_FILE" ]; then
-    DIRTY=$(git status --porcelain -- "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+    DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
     if [ -n "$DIRTY" ]; then
         echo "ERROR: working tree has uncommitted changes (and no interrupted-run sentinel)."
         echo "       Commit, stash, or discard them before running phase2.sh — otherwise they"
@@ -331,7 +331,6 @@ SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
     PREFLIGHT_EXIT=0
-    _PREFLIGHT_SUBSHELL=""
     set +e
     # Same background-subshell pattern as the Aider invocation: `wait` is
     # immediately interruptible by signals whereas a foreground pipeline defers
@@ -395,7 +394,6 @@ if [ "$SKIP_AIDER" = false ]; then
 
     touch "$WIP_FILE"
     AIDER_EXIT=0
-    _AIDER_SUBSHELL=""
     set +e
     # Run the pipeline in a background subshell so that `wait` is used instead of
     # a foreground pipeline. Bash defers trap execution until foreground commands
@@ -417,9 +415,10 @@ if [ "$SKIP_AIDER" = false ]; then
         --yes \
         -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
         2>&1 | tee -a "$LOG_FILE"
-      _aider_rc="${PIPESTATUS[0]}"
-      _tee_rc="${PIPESTATUS[1]}"
-      if [ "${_tee_rc:-0}" -ne 0 ]; then
+      _ps=("${PIPESTATUS[@]}")
+      _aider_rc="${_ps[0]}"
+      _tee_rc="${_ps[1]:-0}"
+      if [ "$_tee_rc" -ne 0 ]; then
         echo "==> WARN: tee failed writing $LOG_FILE (exit ${_tee_rc} — disk full?)" >&2
       fi
       exit "$_aider_rc"
@@ -476,7 +475,7 @@ fi
 if ./verify.sh; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
-    git add -A -- "${_COMMIT_EXCLUDES[@]}"
+    git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
     git commit -m "Step $NEXT: complete"
     rm -f "$WIP_FILE"
     DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
