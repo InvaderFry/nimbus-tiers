@@ -401,10 +401,9 @@ if [ "$SKIP_AIDER" = false ]; then
         --read "$STEP_FILE" \
         --read CONTEXT.md \
         ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
-        --test-cmd "./verify.sh" \
-        --auto-test \
+        --no-auto-test \
         --yes \
-        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
+        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
         2>&1 | tee -a "$LOG_FILE"
       exit "${PIPESTATUS[0]}"
     ) &
