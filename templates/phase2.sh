@@ -438,6 +438,17 @@ if [ "$SKIP_AIDER" = false ]; then
         exit "$AIDER_EXIT"
     fi
 
+    # Token-limit guard: some local models emit a "token limit" message and still
+    # exit 0, but produce a truncated or malformed response (e.g. hundreds of
+    # repeated imports that fill the context, then nothing). Treat any such log
+    # entry as a hard failure so the step is not recorded as done.
+    if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow|n_predict tokens limit)" "$LOG_FILE" 2>/dev/null; then
+        echo "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded."
+        echo "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
+        rm -f "$WIP_FILE"
+        exit 1
+    fi
+
     # Halt detection: if the executor produced or modified plans/halt-stepNN.md
     # during this run, it intentionally stopped because a required prior artifact
     # was missing. Treat the halt file's dirty status as authoritative — partial
@@ -468,6 +479,25 @@ if [ "$SKIP_AIDER" = false ]; then
         echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
         exit 1
     fi
+fi
+
+# Malformed-path guard: some local models prefix file paths with a "File:** \"
+# artifact, causing Aider to create files at garbage paths (e.g.
+# "File:** \src/main/java/Foo.java"). Maven and verify.sh both ignore files
+# outside src/, so a poisoned step would otherwise pass verification and be
+# committed as DONE with the real source files missing.
+# Detection: "**" in a working-tree path is never legitimate; flag and abort.
+_MP=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
+        | grep -E '\*\*' || true)
+if [ -n "$_MP" ]; then
+    echo "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded."
+    echo "    Pattern '**' found in the following working-tree paths:"
+    printf '%s\n' "$_MP" | sed 's/^/    /'
+    echo "    Discarding malformed files and resetting working tree."
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
+    rm -f "$WIP_FILE"
+    exit 1
 fi
 
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
