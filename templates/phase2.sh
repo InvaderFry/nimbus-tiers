@@ -442,9 +442,10 @@ if [ "$SKIP_AIDER" = false ]; then
     # exit 0, but produce a truncated or malformed response (e.g. hundreds of
     # repeated imports that fill the context, then nothing). Treat any such log
     # entry as a hard failure so the step is not recorded as done.
-    if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context.length exceeded|maximum context length)" "$LOG_FILE" 2>/dev/null; then
+    if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow|n_predict tokens limit)" "$LOG_FILE" 2>/dev/null; then
         echo "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded."
         echo "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
+        rm -f "$WIP_FILE"
         exit 1
     fi
 
@@ -495,6 +496,7 @@ if [ -n "$_MP" ]; then
     echo "    Discarding malformed files and resetting working tree."
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
+    rm -f "$WIP_FILE"
     exit 1
 fi
 
