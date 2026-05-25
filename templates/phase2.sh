@@ -77,7 +77,13 @@ cleanup_lock() {
     rm -f "$LOCK_START_FILE" 2>/dev/null || true
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
-trap cleanup_lock EXIT INT TERM
+_handle_signal() {
+    cleanup_lock
+    # Force-kill the entire process group so aider can't swallow SIGINT during summarization.
+    kill -KILL 0 2>/dev/null || true
+}
+trap '_handle_signal' INT TERM
+trap 'cleanup_lock' EXIT
 
 # All phase commits must land on a named feature branch so they're visible to
 # `git branch` and to the post-Phase-3 merge step. Detached HEAD is detected
@@ -377,6 +383,8 @@ if [ "$SKIP_AIDER" = false ]; then
     ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} aider \
       --no-auto-commits \
       --no-show-model-warnings \
+      --map-tokens 0 \
+      --no-suggest-shell-commands \
       --read "$STEP_FILE" \
       --read CONTEXT.md \
       ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
