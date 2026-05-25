@@ -78,12 +78,15 @@ cleanup_lock() {
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
 _AIDER_SUBSHELL=""
+_PREFLIGHT_SUBSHELL=""
 _handle_signal() {
     cleanup_lock
-    # Kill the aider subshell and its children first, then the whole process group.
-    # Without this, bash defers the trap until the foreground pipeline finishes —
-    # which never happens if aider is hanging. Running the pipeline via a background
-    # subshell + `wait` makes the trap fire immediately on Ctrl+C.
+    # kill -KILL on the subshell process only; children (aider, tee, verify.sh)
+    # inside it are NOT forwarded the signal — they survive until kill -KILL 0
+    # kills the entire process group on the next line.
+    # Running pipelines via background subshells + `wait` makes this trap fire
+    # immediately on Ctrl+C instead of being deferred until the pipeline exits.
+    [ -n "${_PREFLIGHT_SUBSHELL:-}" ] && kill -KILL "$_PREFLIGHT_SUBSHELL" 2>/dev/null || true
     [ -n "${_AIDER_SUBSHELL:-}" ] && kill -KILL "$_AIDER_SUBSHELL" 2>/dev/null || true
     kill -KILL 0 2>/dev/null || true
 }
@@ -328,9 +331,18 @@ SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
     PREFLIGHT_EXIT=0
+    _PREFLIGHT_SUBSHELL=""
     set +e
-    ./verify.sh 2>&1 | tee "$LOG_FILE"
-    PREFLIGHT_EXIT="${PIPESTATUS[0]}"
+    # Same background-subshell pattern as the Aider invocation: `wait` is
+    # immediately interruptible by signals whereas a foreground pipeline defers
+    # trap execution until the pipeline finishes.
+    (
+      ./verify.sh 2>&1 | tee "$LOG_FILE"
+      exit "${PIPESTATUS[0]}"
+    ) &
+    _PREFLIGHT_SUBSHELL=$!
+    wait "$_PREFLIGHT_SUBSHELL"
+    PREFLIGHT_EXIT=$?
     set -e
     if [ "$PREFLIGHT_EXIT" -eq 0 ]; then
         echo "==> Pre-flight verify passed — step $NEXT appears already complete. Skipping Aider."
@@ -405,7 +417,12 @@ if [ "$SKIP_AIDER" = false ]; then
         --yes \
         -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
         2>&1 | tee -a "$LOG_FILE"
-      exit "${PIPESTATUS[0]}"
+      _aider_rc="${PIPESTATUS[0]}"
+      _tee_rc="${PIPESTATUS[1]}"
+      if [ "${_tee_rc:-0}" -ne 0 ]; then
+        echo "==> WARN: tee failed writing $LOG_FILE (exit ${_tee_rc} — disk full?)" >&2
+      fi
+      exit "$_aider_rc"
     ) &
     _AIDER_SUBSHELL=$!
     wait "$_AIDER_SUBSHELL"
