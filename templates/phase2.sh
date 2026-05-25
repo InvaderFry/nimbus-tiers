@@ -77,9 +77,17 @@ cleanup_lock() {
     rm -f "$LOCK_START_FILE" 2>/dev/null || true
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
+_AIDER_SUBSHELL=""
+_PREFLIGHT_SUBSHELL=""
 _handle_signal() {
     cleanup_lock
-    # Force-kill the entire process group so aider can't swallow SIGINT during summarization.
+    # kill -KILL on the subshell process only; children (aider, tee, verify.sh)
+    # inside it are NOT forwarded the signal — they survive until kill -KILL 0
+    # kills the entire process group on the next line.
+    # Running pipelines via background subshells + `wait` makes this trap fire
+    # immediately on Ctrl+C instead of being deferred until the pipeline exits.
+    [ -n "${_PREFLIGHT_SUBSHELL:-}" ] && kill -KILL "$_PREFLIGHT_SUBSHELL" 2>/dev/null || true
+    [ -n "${_AIDER_SUBSHELL:-}" ] && kill -KILL "$_AIDER_SUBSHELL" 2>/dev/null || true
     kill -KILL 0 2>/dev/null || true
 }
 trap '_handle_signal' INT TERM
@@ -323,9 +331,18 @@ SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
     PREFLIGHT_EXIT=0
+    _PREFLIGHT_SUBSHELL=""
     set +e
-    ./verify.sh 2>&1 | tee "$LOG_FILE"
-    PREFLIGHT_EXIT="${PIPESTATUS[0]}"
+    # Same background-subshell pattern as the Aider invocation: `wait` is
+    # immediately interruptible by signals whereas a foreground pipeline defers
+    # trap execution until the pipeline finishes.
+    (
+      ./verify.sh 2>&1 | tee "$LOG_FILE"
+      exit "${PIPESTATUS[0]}"
+    ) &
+    _PREFLIGHT_SUBSHELL=$!
+    wait "$_PREFLIGHT_SUBSHELL"
+    PREFLIGHT_EXIT=$?
     set -e
     if [ "$PREFLIGHT_EXIT" -eq 0 ]; then
         echo "==> Pre-flight verify passed — step $NEXT appears already complete. Skipping Aider."
@@ -378,22 +395,38 @@ if [ "$SKIP_AIDER" = false ]; then
 
     touch "$WIP_FILE"
     AIDER_EXIT=0
+    _AIDER_SUBSHELL=""
     set +e
+    # Run the pipeline in a background subshell so that `wait` is used instead of
+    # a foreground pipeline. Bash defers trap execution until foreground commands
+    # finish, meaning Ctrl+C can't fire _handle_signal while aider is blocking.
+    # `wait <pid>` is immediately interruptible — the trap runs the moment the
+    # signal arrives. The subshell propagates aider's exit code (including 124 for
+    # timeout) via `exit "${PIPESTATUS[0]}"`.
     # ${arr[@]+"${arr[@]}"} avoids tripping `set -u` on empty arrays under bash < 4.4.
-    ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} aider \
-      --no-auto-commits \
-      --no-show-model-warnings \
-      --map-tokens 0 \
-      --no-suggest-shell-commands \
-      --read "$STEP_FILE" \
-      --read CONTEXT.md \
-      ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
-      --test-cmd "./verify.sh" \
-      --auto-test \
-      --yes \
-      -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
-      2>&1 | tee -a "$LOG_FILE"
-    AIDER_EXIT="${PIPESTATUS[0]}"
+    (
+      ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} aider \
+        --no-auto-commits \
+        --no-show-model-warnings \
+        --map-tokens 0 \
+        --no-suggest-shell-commands \
+        --read "$STEP_FILE" \
+        --read CONTEXT.md \
+        ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
+        --no-auto-test \
+        --yes \
+        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
+        2>&1 | tee -a "$LOG_FILE"
+      _aider_rc="${PIPESTATUS[0]}"
+      _tee_rc="${PIPESTATUS[1]}"
+      if [ "${_tee_rc:-0}" -ne 0 ]; then
+        echo "==> WARN: tee failed writing $LOG_FILE (exit ${_tee_rc} — disk full?)" >&2
+      fi
+      exit "$_aider_rc"
+    ) &
+    _AIDER_SUBSHELL=$!
+    wait "$_AIDER_SUBSHELL"
+    AIDER_EXIT=$?
     set -e
 
     if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
