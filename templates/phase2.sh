@@ -77,7 +77,14 @@ cleanup_lock() {
     rm -f "$LOCK_START_FILE" 2>/dev/null || true
     rmdir "$LOCK_DIR" 2>/dev/null || true
 }
-trap cleanup_lock EXIT INT TERM
+AIDER_PID=""
+TAIL_PID=""
+_cleanup() {
+    [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null || true
+    [ -n "$AIDER_PID" ] && kill -KILL -"$AIDER_PID" 2>/dev/null || true
+    cleanup_lock
+}
+trap _cleanup EXIT INT TERM
 
 # All phase commits must land on a named feature branch so they're visible to
 # `git branch` and to the post-Phase-3 merge step. Detached HEAD is detected
@@ -373,10 +380,16 @@ if [ "$SKIP_AIDER" = false ]; then
     touch "$WIP_FILE"
     AIDER_EXIT=0
     set +e
+    touch "$LOG_FILE"
+    # set -m runs aider in its own process group so _cleanup can SIGKILL the
+    # entire group (including any background threads) via kill -KILL -$AIDER_PID.
     # ${arr[@]+"${arr[@]}"} avoids tripping `set -u` on empty arrays under bash < 4.4.
+    set -m
     ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} aider \
       --no-auto-commits \
       --no-show-model-warnings \
+      --map-tokens 0 \
+      --no-suggest-shell-commands \
       --read "$STEP_FILE" \
       --read CONTEXT.md \
       ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
@@ -384,8 +397,16 @@ if [ "$SKIP_AIDER" = false ]; then
       --auto-test \
       --yes \
       -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Run ./verify.sh; if it fails, fix and retry." \
-      2>&1 | tee -a "$LOG_FILE"
-    AIDER_EXIT="${PIPESTATUS[0]}"
+      >> "$LOG_FILE" 2>&1 &
+    AIDER_PID=$!
+    set +m
+    tail -f "$LOG_FILE" &
+    TAIL_PID=$!
+    wait "$AIDER_PID"
+    AIDER_EXIT=$?
+    kill "$TAIL_PID" 2>/dev/null || true
+    wait "$TAIL_PID" 2>/dev/null || true
+    TAIL_PID=""
     set -e
 
     if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
