@@ -341,6 +341,7 @@ keyless public API and returns a typed reading.
 ## Files to change
 - src/main/java/com/example/weather/WeatherService.java (create if missing)
 - src/main/java/com/example/weather/WeatherReading.java (create if missing)
+- src/test/java/com/example/weather/WeatherServiceTest.java (create if missing)
 
 ## Work
 - WeatherReading is an immutable record: temperatureF (double),
@@ -366,10 +367,14 @@ keyless public API and returns a typed reading.
 - Mock a 503 response; assert WeatherFetchException is thrown.
 - Mock a payload with humidity missing; assert WeatherFetchException
   is thrown.
+- Spring context-load test: load the application context with a mock
+  RestClient bean; assert WeatherService is wired and fetch() returns
+  a non-null WeatherReading. (Required per the wiring-test guardrail —
+  WeatherService is a Spring-managed component.)
 
 ## Done condition
-- WeatherService and WeatherReading exist with the behavior above.
-- All three acceptance tests pass.
+- WeatherService, WeatherReading, and WeatherServiceTest exist with
+  the behavior above.
 - ./verify.sh exits 0.
 ```
 

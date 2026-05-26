@@ -351,22 +351,31 @@ if [ -f "$WIP_FILE" ]; then
     fi
 fi
 
-if [ "$SKIP_AIDER" = false ]; then
-    # Parse "## Files to change" and pass each existing path as --file so Aider
-    # sees real content instead of hallucinating SEARCH blocks. Strips a single
-    # trailing "(annotation)" and one layer of `/"/' wrapping. Paths with
-    # embedded spaces are skipped (PHASE1_SPEC.md examples never use them and
-    # bash word-splitting would complicate the --file plumbing).
-    _strip_md_path() {
-        local p="${1#- }"
-        p="${p%%(*}"
-        p="${p%"${p##*[![:space:]]}"}"
-        p="${p#\`}"; p="${p%\`}"
-        p="${p#\"}"; p="${p%\"}"
-        p="${p#\'}"; p="${p%\'}"
-        printf '%s' "$p"
-    }
+# Parse a path entry from a "## Files to change" list item in a step file.
+# Strips the leading "- " marker, any remaining leading whitespace (handles the
+# double-space typo '- ⎵⎵src/...'), a trailing "(annotation)" suffix, and one
+# layer of `/"/' wrapping. Called from both the FILE_ARGS setup below and the
+# planned-file existence guard; defined here so both uses share the same parser
+# regardless of the SKIP_AIDER path.
+_strip_md_path() {
+    local p="${1#- }"
+    # Strip any leading whitespace left after removing the "- " prefix.
+    # Without this, '- ⎵⎵src/Foo.java' (double space) leaves ' src/Foo.java'
+    # which the embedded-space guard would silently skip rather than check.
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%%(*}"
+    p="${p%"${p##*[![:space:]]}"}"
+    p="${p#\`}"; p="${p%\`}"
+    p="${p#\"}"; p="${p%\"}"
+    p="${p#\'}"; p="${p%\'}"
+    printf '%s' "$p"
+}
 
+if [ "$SKIP_AIDER" = false ]; then
+    # Pass each existing planned path as --file so Aider sees real content
+    # instead of hallucinating SEARCH blocks. Paths with embedded spaces are
+    # skipped — bash word-splitting would complicate the --file plumbing and
+    # real paths in these projects never contain spaces.
     FILE_ARGS=()
     PARSED_COUNT=0
     while IFS= read -r f; do
@@ -491,25 +500,31 @@ if [ "$SKIP_AIDER" = false ]; then
         exit 1
     fi
 
-    # Planned-file existence guard: every path listed in "## Files to change" must
-    # exist on disk after Aider exits. A path that is absent means Aider skipped
-    # creating it (e.g. a test class the step was supposed to produce). verify.sh
-    # cannot catch missing test files — it only runs tests that exist. Reject the
-    # step here so a skipped file never silently become a committed DONE.
-    _MISSING_PLANNED=()
-    while IFS= read -r _pf; do
-        _ppath=$(_strip_md_path "$_pf")
-        [ -z "$_ppath" ] && continue
-        case "$_ppath" in *" "*) continue ;; esac
-        [ -f "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
-    done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
-    if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
-        echo "==> ERROR: planned file(s) missing after Aider exit — step $NEXT NOT recorded."
-        printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
-        echo "    Aider may have skipped creating these files. Inspect $LOG_FILE."
-        rm -f "$WIP_FILE"
-        exit 1
-    fi
+fi
+
+# Planned-file existence guard: every path listed in "## Files to change" must
+# exist on disk after Aider exits — including on the SKIP_AIDER=true
+# (interrupted-run recovery) path. A path that is absent means Aider skipped
+# creating it (e.g. a test class the step was supposed to produce). verify.sh
+# cannot catch missing test files — it only runs tests that exist. Placed
+# outside the SKIP_AIDER block so recovery runs are also protected.
+# Uses [ -e ] rather than [ -f ] so steps that create a directory (not just a
+# regular file) do not trigger a false-positive rejection.
+_MISSING_PLANNED=()
+while IFS= read -r _pf; do
+    _ppath=$(_strip_md_path "$_pf")
+    [ -z "$_ppath" ] && continue
+    case "$_ppath" in *" "*) continue ;; esac
+    [ -e "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
+done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
+    echo "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
+    printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
+    echo "    Aider may have skipped creating these paths. Inspect $LOG_FILE."
+    echo "    Note: non-parenthesis annotations (em-dash, colon) on list entries are"
+    echo "    not stripped and cause the entry to be silently skipped. Use '(note)' format."
+    rm -f "$WIP_FILE"
+    exit 1
 fi
 
 # Malformed-path guard: some local models prefix file paths with a "File:** \"
@@ -535,11 +550,18 @@ fi
 # internal summarization completed. Prevents lost progress on aider crashes post-verification.
 # verify.sh output is appended to the step log so one file contains both Aider output
 # and verification results, making root-cause analysis on failed steps much easier.
-VERIFY_EXIT=0
+# Capture the full PIPESTATUS array atomically before any other command can reset it,
+# then check tee separately — mirrors the same pattern used in the Aider subshell.
+_verify_ps=()
 set +e
 ./verify.sh 2>&1 | tee -a "$LOG_FILE"
-VERIFY_EXIT="${PIPESTATUS[0]}"
+_verify_ps=("${PIPESTATUS[@]}")
 set -e
+VERIFY_EXIT="${_verify_ps[0]}"
+_verify_tee_rc="${_verify_ps[1]:-0}"
+if [ "$_verify_tee_rc" -ne 0 ]; then
+    echo "==> WARN: tee failed writing $LOG_FILE (exit ${_verify_tee_rc} — disk full?)" >&2
+fi
 if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
