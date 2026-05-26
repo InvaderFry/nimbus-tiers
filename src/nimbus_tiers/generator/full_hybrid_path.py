@@ -100,6 +100,14 @@ class FullHybridPath(SetupPath):
                     TemplateSpec(Path("stacks/java-gradle/build.gradle"), Path("build.gradle")),
                     TemplateSpec(Path("stacks/java-gradle/settings.gradle"), Path("settings.gradle")),
                     TemplateSpec(Path("stacks/java-gradle/gradlew"), Path("gradlew")),
+                    TemplateSpec(
+                        Path(
+                            "stacks/java-gradle/mockito-extensions/org.mockito.plugins.MockMaker"
+                        ),
+                        Path(
+                            "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker"
+                        ),
+                    ),
                 ]
 
         if stack == "python":

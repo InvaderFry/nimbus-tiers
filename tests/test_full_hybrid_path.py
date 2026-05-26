@@ -58,6 +58,10 @@ def test_full_hybrid_ships_stack_specific_verify_helper(stack: str) -> None:
     ("java-gradle", "build.gradle"),
     ("java-gradle", "settings.gradle"),
     ("java-gradle", "gradlew"),
+    (
+        "java-gradle",
+        "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker",
+    ),
     ("python", "main.py"),
     ("python", "requirements.txt"),
     ("python", "tests/test_main.py"),
