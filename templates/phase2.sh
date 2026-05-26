@@ -372,7 +372,10 @@ _strip_md_path() {
     # Without this, '- ⎵⎵src/Foo.java' (double space) leaves ' src/Foo.java'
     # which the embedded-space guard would silently skip rather than check.
     p="${p#"${p%%[![:space:]]*}"}"
-    p="${p%%(*}"
+    # Strip trailing annotation: shortest-match " (*" removes only the trailing
+    # " (note)" suffix. Using % not %% avoids truncating at the first ( in a
+    # directory component (e.g. com/example(v1)/Foo.java is left intact).
+    p="${p% (*}"
     p="${p%"${p##*[![:space:]]}"}"
     p="${p#\`}"; p="${p%\`}"
     p="${p#\"}"; p="${p%\"}"

@@ -168,10 +168,11 @@ If `phase2.sh` exits 1 on the same step twice in a row, do not just keep retryin
 3. **If the step file is too vague or too large**, return to Phase 1 and rewrite or split it. The 400-token cap exists for a reason; if you're hitting it, the step is doing too much.
 4. **If two consecutive rewrites still fail**, escalate to Phase 3 / frontier review for a single targeted commit, then resume Phase 2 on the next step.
 
-Java/Maven note: if `verify.sh` fails with Mockito/Byte Buddy self-attach errors
-in WSL/containers, add
+Java note (Maven and Gradle): the scaffolded project automatically includes
 `src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker` with
-`mock-maker-subclass` (unless your tests explicitly require inline mocking).
+`mock-maker-subclass`. This prevents Mockito/Byte Buddy self-attach failures
+in WSL/containers. If the error still appears, verify the file was copied
+correctly and that your tests do not explicitly require inline mocking.
 
 Upgrade note (interrupted-run detection): older versions of `phase2.sh` used a
 dirty-tree heuristic to detect an interrupted prior run. The current version
