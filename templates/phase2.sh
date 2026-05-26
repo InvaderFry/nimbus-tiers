@@ -235,7 +235,7 @@ fi
 # coreutils (`brew install coreutils` exposes `gtimeout`, or symlink it as
 # `timeout`).
 if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD=(timeout 15m)
+    TIMEOUT_CMD=(timeout --kill-after=30s 15m)
 else
     echo "==> WARN: 'timeout' not found; running aider without a wall-clock cap." >&2
     echo "    Install coreutils to enable the 15-minute step timeout." >&2
@@ -456,6 +456,26 @@ if [ "$SKIP_AIDER" = false ]; then
         echo "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
         rm -f "$WIP_FILE"
         exit 1
+    fi
+
+    # Repeated-output (degenerate generation) guard: local models can enter a loop
+    # emitting the same token sequence — import lines, class names, etc. — until the
+    # Tabby/litellm server aborts the completion and retries. This produces a log full
+    # of repeated identical lines followed by "Chat completion aborted / Retrying".
+    # Aider may then exit 0 with partial or garbage output that the token-limit guard
+    # above misses (no explicit "token limit" message in the abort path). Detect it by
+    # counting the maximum occurrence of any non-trivial line in the log.
+    if [ -f "$LOG_FILE" ]; then
+        _repeat_max=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null \
+            | sort | uniq -c | sort -rn \
+            | awk 'NR==1{print $1; exit}' || echo 0)
+        if [ "${_repeat_max:-0}" -gt 20 ]; then
+            echo "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded."
+            echo "    The local model likely looped generating the same tokens until litellm aborted."
+            echo "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model."
+            rm -f "$WIP_FILE"
+            exit 1
+        fi
     fi
 
     # Aider-health warning: Aider can apply edits and still fail at its internal
