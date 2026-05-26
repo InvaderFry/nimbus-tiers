@@ -502,37 +502,33 @@ if [ "$SKIP_AIDER" = false ]; then
 
 fi
 
-# Planned-file existence guard: every path listed in "## Files to change" must
-# exist on disk after Aider exits — including on the SKIP_AIDER=true
-# (interrupted-run recovery) path. A path that is absent means Aider skipped
-# creating it (e.g. a test class the step was supposed to produce). verify.sh
-# cannot catch missing test files — it only runs tests that exist. Placed
-# outside the SKIP_AIDER block so recovery runs are also protected.
-# Uses [ -e ] rather than [ -f ] so steps that create a directory (not just a
-# regular file) do not trigger a false-positive rejection.
-_MISSING_PLANNED=()
-while IFS= read -r _pf; do
-    _ppath=$(_strip_md_path "$_pf")
-    [ -z "$_ppath" ] && continue
-    case "$_ppath" in *" "*) continue ;; esac
-    [ -e "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
-done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
-if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
-    echo "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
-    printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
-    echo "    Aider may have skipped creating these paths. Inspect $LOG_FILE."
-    echo "    Note: non-parenthesis annotations (em-dash, colon) on list entries are"
-    echo "    not stripped and cause the entry to be silently skipped. Use '(note)' format."
+# Halt detection — recovery path: inside SKIP_AIDER=false the halt check fires
+# if Aider wrote the halt file during this run (lines 473–494). But if that run
+# was killed between halt-file creation and the halt commit, the WIP sentinel
+# persists and the next invocation takes the SKIP_AIDER=true path, bypassing
+# the inner block entirely. This outer check catches that case so the halt
+# report is always committed and exit 2 is always returned on a halt.
+# On the SKIP_AIDER=false path this check is unreachable: the inner halt block
+# already exited 2 before we reach here.
+if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
+    echo "==> Step $NEXT halted (recovery): $HALT_FILE was written by the prior run."
+    echo "    Discarding any unrelated in-tree changes."
+    echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
+    git reset -q HEAD -- . 2>/dev/null || true
+    git add -- "$HALT_FILE"
+    git commit -m "Step $NEXT: HALT (missing prior artifact)"
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
+    log_routing "step-${STEP_PAD}" "false" "0" "halted"
     rm -f "$WIP_FILE"
-    exit 1
+    exit 2
 fi
 
-# Malformed-path guard: some local models prefix file paths with a "File:** \"
-# artifact, causing Aider to create files at garbage paths (e.g.
-# "File:** \src/main/java/Foo.java"). Maven and verify.sh both ignore files
-# outside src/, so a poisoned step would otherwise pass verification and be
-# committed as DONE with the real source files missing.
-# Detection: "**" in a working-tree path is never legitimate; flag and abort.
+# Malformed-path guard runs BEFORE the planned-file existence check so that
+# garbage files Aider created at bad paths are cleaned up first. Without this
+# ordering, a garbage-path artifact would cause the existence guard to fire
+# and exit 1 before git clean runs, leaving the garbage file in the working
+# tree and causing the next invocation's dirty-tree guard to block.
 _MP=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
         | grep -E '\*\*' || true)
 if [ -n "$_MP" ]; then
@@ -543,6 +539,46 @@ if [ -n "$_MP" ]; then
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
     rm -f "$WIP_FILE"
+    exit 1
+fi
+
+# Planned-file existence guard: every path listed in "## Files to change" must
+# exist on disk. Placed outside the SKIP_AIDER block so recovery runs
+# (SKIP_AIDER=true) are also protected. Uses [ -e ] to accept directories too.
+_MISSING_PLANNED=()
+while IFS= read -r _pf; do
+    _ppath=$(_strip_md_path "$_pf")
+    [ -z "$_ppath" ] && continue
+    case "$_ppath" in *" "*) continue ;; esac
+    [ -e "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
+done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
+    echo "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
+    printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
+    if [ "$SKIP_AIDER" = true ]; then
+        # Recovery path: the prior Aider run may have left partial changes.
+        # Preserve WIP_FILE when the tree is dirty so the next invocation retries
+        # the SKIP_AIDER=true path — if verify.sh then fails, SKIP_AIDER flips to
+        # false and Aider re-runs to complete the step. When the tree is clean
+        # (Aider was killed before writing anything), remove WIP_FILE so the next
+        # invocation runs Aider fresh instead of looping through SKIP_AIDER=true.
+        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+        if [ -n "$_RECOVERY_DIRTY" ]; then
+            echo "    The prior Aider run left uncommitted partial changes in the working tree."
+            echo "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to"
+            echo "    complete the step. To discard partial changes and start fresh:"
+            echo "      git checkout -- . && git clean -fd && rm -f '${WIP_FILE}'"
+        else
+            echo "    The prior Aider run appears to have made no changes. Re-running"
+            echo "    ./phase2.sh will invoke Aider fresh to complete the step."
+            rm -f "$WIP_FILE"
+        fi
+    else
+        echo "    Aider may have skipped creating these paths. Inspect $LOG_FILE."
+        echo "    Note: non-parenthesis annotations (em-dash, colon) on list entries are"
+        echo "    not stripped and cause the entry to be silently skipped. Use '(note)' format."
+        rm -f "$WIP_FILE"
+    fi
     exit 1
 fi
 
