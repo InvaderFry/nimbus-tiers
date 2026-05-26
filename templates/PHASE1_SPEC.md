@@ -262,6 +262,11 @@ Required structure:
 ## Files to change
 - List intended files.
 - Create only if missing; otherwise update existing files carefully.
+- Every test file this step must create or modify — unit tests, integration
+  tests, and wiring/context-load tests — must appear in this list.
+  `phase2.sh` checks that every listed path exists after Aider exits; a
+  planned test file that is absent causes the step to be rejected as
+  incomplete rather than silently committed as DONE.
 
 ## Work
 - Describe behavior to implement.
@@ -278,6 +283,11 @@ Required structure:
 - Tests must be deterministic.
 - Tests must avoid live network unless explicitly required.
 - Tests must verify behavior, not only compilation.
+- If this step introduces a Spring bean, DI-wired component, command runner,
+  controller, route, or CLI entry point, include at least one wiring or
+  context-load test that verifies the framework successfully instantiates it.
+  A unit test that mocks the component directly does not substitute for this:
+  unit tests can pass while the application fails to start.
 
 ## Done condition
 - State the clear completion condition.
@@ -362,3 +372,30 @@ keyless public API and returns a typed reading.
 - All three acceptance tests pass.
 - ./verify.sh exits 0.
 ```
+
+---
+
+## Language-specific guardrails
+
+These apply in addition to the general rules above. When generating a step
+file for a project in one of the languages below, the step must respect
+these constraints. Omit sections for languages not used in the project.
+
+### Java
+
+- **Map.of() arity limit:** `Map.of(k, v, …)` has fixed-arity overloads
+  that accept at most 10 key-value pairs. For maps with more than 10 entries,
+  instruct the executor to use `Map.ofEntries(Map.entry(k1, v1), …)` instead.
+  A plan that exceeds this limit produces a compile error with no clear
+  diagnostic.
+- **Record accessor names:** Java record accessors use the field name directly
+  (e.g. `temperatureF()`, not `getTemperatureF()`). Any step that reads a
+  record field must verify the accessor name against the record definition
+  in the same or an earlier step. Name drift across steps causes compile
+  failures that verify.sh will catch only if compilation is in the gate.
+- **RestClient availability:** `RestClient` was introduced in Spring Boot 3.2.
+  If a step uses `RestClient`, instruct the executor to verify
+  `spring-boot.version >= 3.2` in `pom.xml` or `build.gradle` before using
+  it, and not to fall back to the deprecated `RestTemplate` without noting
+  the downgrade explicitly. A missing `RestClient` bean causes a runtime
+  startup failure that unit tests (which mock the service) will not catch.

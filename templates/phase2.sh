@@ -449,6 +449,17 @@ if [ "$SKIP_AIDER" = false ]; then
         exit 1
     fi
 
+    # Aider-health warning: Aider can apply edits and still fail at its internal
+    # context summarization ("Summarization failed") or crash with an unhandled
+    # exception. These are internal failures, not proof that edits are wrong —
+    # verify.sh is the deterministic gate. Log a visible warning here so the step
+    # log captures the signal; if verify.sh also fails, the combined log gives
+    # full context for root-cause analysis.
+    if [ -f "$LOG_FILE" ] && grep -qiE "(Summarization failed|summarizer unexpectedly failed|Traceback \(most recent call last\)|unhandled exception)" "$LOG_FILE" 2>/dev/null; then
+        echo "==> WARN: Aider internal failure detected (summarization error or exception) — see $LOG_FILE." >&2
+        echo "    Proceeding to verify.sh; if it fails, Aider may have produced partial output." >&2
+    fi
+
     # Halt detection: if the executor produced or modified plans/halt-stepNN.md
     # during this run, it intentionally stopped because a required prior artifact
     # was missing. Treat the halt file's dirty status as authoritative — partial
@@ -479,6 +490,26 @@ if [ "$SKIP_AIDER" = false ]; then
         echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
         exit 1
     fi
+
+    # Planned-file existence guard: every path listed in "## Files to change" must
+    # exist on disk after Aider exits. A path that is absent means Aider skipped
+    # creating it (e.g. a test class the step was supposed to produce). verify.sh
+    # cannot catch missing test files — it only runs tests that exist. Reject the
+    # step here so a skipped file never silently become a committed DONE.
+    _MISSING_PLANNED=()
+    while IFS= read -r _pf; do
+        _ppath=$(_strip_md_path "$_pf")
+        [ -z "$_ppath" ] && continue
+        case "$_ppath" in *" "*) continue ;; esac
+        [ -f "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
+    done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+    if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
+        echo "==> ERROR: planned file(s) missing after Aider exit — step $NEXT NOT recorded."
+        printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
+        echo "    Aider may have skipped creating these files. Inspect $LOG_FILE."
+        rm -f "$WIP_FILE"
+        exit 1
+    fi
 fi
 
 # Malformed-path guard: some local models prefix file paths with a "File:** \"
@@ -502,7 +533,14 @@ fi
 
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
 # internal summarization completed. Prevents lost progress on aider crashes post-verification.
-if ./verify.sh; then
+# verify.sh output is appended to the step log so one file contains both Aider output
+# and verification results, making root-cause analysis on failed steps much easier.
+VERIFY_EXIT=0
+set +e
+./verify.sh 2>&1 | tee -a "$LOG_FILE"
+VERIFY_EXIT="${PIPESTATUS[0]}"
+set -e
+if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
