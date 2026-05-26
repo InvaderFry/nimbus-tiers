@@ -230,12 +230,21 @@ fi
 # in the version used here; the retry count is not configurable via CLI or
 # config and defaults to aider's internal limit.
 # `timeout(1)` is GNU coreutils — present on Linux, but not in stock macOS.
-# Probe and fall back to running aider unbounded with a clear warning rather
-# than failing the run; users who want the wall-clock cap can install
-# coreutils (`brew install coreutils` exposes `gtimeout`, or symlink it as
-# `timeout`).
+# Probe for existence first, then probe for --kill-after support (a GNU
+# extension absent in busybox and BSD timeout). On macOS without coreutils
+# the existence check fails and TIMEOUT_CMD is left empty. On busybox/Alpine
+# the existence check passes but the capability check fails, falling back to
+# plain timeout so the script doesn't break with an invalid-option error.
+# Users who want --kill-after support can install GNU coreutils
+# (`brew install coreutils` exposes `gtimeout`, or symlink it as `timeout`).
 if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_CMD=(timeout --kill-after=30s 15m)
+    if timeout --kill-after=1s 1s true 2>/dev/null; then
+        TIMEOUT_CMD=(timeout --kill-after=30s 15m)
+    else
+        echo "==> WARN: 'timeout' found but does not support --kill-after (busybox or BSD?); using plain timeout." >&2
+        echo "    Install GNU coreutils for hard-kill support on stuck aider processes." >&2
+        TIMEOUT_CMD=(timeout 15m)
+    fi
 else
     echo "==> WARN: 'timeout' not found; running aider without a wall-clock cap." >&2
     echo "    Install coreutils to enable the 15-minute step timeout." >&2
@@ -437,7 +446,8 @@ if [ "$SKIP_AIDER" = false ]; then
     AIDER_EXIT=$?
     set -e
 
-    if [ "$AIDER_EXIT" -eq 124 ] && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
+    # 124 = SIGTERM from timeout; 137 = SIGKILL from --kill-after (128 + 9).
+    if { [ "$AIDER_EXIT" -eq 124 ] || [ "$AIDER_EXIT" -eq 137 ]; } && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
         echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
         exit 1
     fi
@@ -460,16 +470,19 @@ if [ "$SKIP_AIDER" = false ]; then
 
     # Repeated-output (degenerate generation) guard: local models can enter a loop
     # emitting the same token sequence — import lines, class names, etc. — until the
-    # Tabby/litellm server aborts the completion and retries. This produces a log full
-    # of repeated identical lines followed by "Chat completion aborted / Retrying".
-    # Aider may then exit 0 with partial or garbage output that the token-limit guard
-    # above misses (no explicit "token limit" message in the abort path). Detect it by
-    # counting the maximum occurrence of any non-trivial line in the log.
+    # Tabby/litellm server aborts the completion. If litellm eventually gives up and
+    # aider exits 0 (rather than timing out), the output is partial or garbage not
+    # caught by the token-limit grep above (no "token limit" message in the abort
+    # path). Detect it by counting the max occurrence of any non-trivial line in the
+    # Aider output. Note: this guard only fires when AIDER_EXIT==0; the timeout case
+    # (exit 124/137) is caught above and exits before reaching here.
+    # Note: the pipeline exits 0 on an empty log (each stage succeeds with no output),
+    # so _repeat_max will be empty rather than "0" — the :-0 default handles that.
     if [ -f "$LOG_FILE" ]; then
         _repeat_max=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null \
             | sort | uniq -c | sort -rn \
-            | awk 'NR==1{print $1; exit}' || echo 0)
-        if [ "${_repeat_max:-0}" -gt 20 ]; then
+            | awk 'NR==1{print $1; exit}')
+        if [ "${_repeat_max:-0}" -gt 30 ]; then
             echo "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded."
             echo "    The local model likely looped generating the same tokens until litellm aborted."
             echo "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model."
