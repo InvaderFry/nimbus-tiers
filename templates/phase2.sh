@@ -80,8 +80,36 @@ cleanup_lock() {
 _AIDER_SUBSHELL=""
 _PREFLIGHT_SUBSHELL=""
 _WATCHDOG_SUBSHELL=""
+# Initialized before the traps are armed so _cleanup_empty_placeholders (called
+# from _handle_signal) is safe even if a signal lands before the FILE_ARGS loop
+# populates it. The loop re-initializes it to () in the SKIP_AIDER=false path.
+_PLACEHOLDERS=()
+
+# Remove placeholders we created for missing planned files that are still empty.
+# Aider populates a placeholder only when it produces a valid edit, so on every
+# failure path (watchdog kill, timeout, nonzero exit, token-limit/degenerate
+# aborts) the stub is left 0-byte. Leaving it behind would either block the next
+# run's dirty-tree guard (paths that clear the WIP sentinel) or let a 0-byte stub
+# masquerade as a created file in the existence guard (paths that keep it). Call
+# this before every failure exit after placeholders are created. Populated
+# placeholders are intentionally kept so the success path can commit them. The
+# ${arr[@]+...} guard is `set -u`-safe even before _PLACEHOLDERS is defined.
+_cleanup_empty_placeholders() {
+    local _ph
+    for _ph in ${_PLACEHOLDERS[@]+"${_PLACEHOLDERS[@]}"}; do
+        if [ -f "$_ph" ] && [ ! -s "$_ph" ]; then
+            rm -f "$_ph"
+        fi
+    done
+}
+
 _handle_signal() {
     cleanup_lock
+    # Remove empty placeholders before the group is killed. Without this an
+    # interrupt after placeholder creation leaves 0-byte stubs behind; the WIP
+    # sentinel persists, so the next run treats them as pre-existing files (not
+    # placeholders), bypassing the empty-stub cleanup and existence guard.
+    _cleanup_empty_placeholders
     # kill -KILL on the subshell process only; children (aider, tee, verify.sh)
     # inside it are NOT forwarded the signal — they survive until kill -KILL 0
     # kills the entire process group on the next line.
@@ -106,24 +134,6 @@ _kill_tree() {
         _kill_tree "$child"
     done
     kill -KILL "$pid" 2>/dev/null || true
-}
-
-# Remove placeholders we created for missing planned files that are still empty.
-# Aider populates a placeholder only when it produces a valid edit, so on every
-# failure path (watchdog kill, timeout, nonzero exit, token-limit/degenerate
-# aborts) the stub is left 0-byte. Leaving it behind would either block the next
-# run's dirty-tree guard (paths that clear the WIP sentinel) or let a 0-byte stub
-# masquerade as a created file in the existence guard (paths that keep it). Call
-# this before every failure exit after placeholders are created. Populated
-# placeholders are intentionally kept so the success path can commit them. The
-# ${arr[@]+...} guard is `set -u`-safe even before _PLACEHOLDERS is defined.
-_cleanup_empty_placeholders() {
-    local _ph
-    for _ph in ${_PLACEHOLDERS[@]+"${_PLACEHOLDERS[@]}"}; do
-        if [ -f "$_ph" ] && [ ! -s "$_ph" ]; then
-            rm -f "$_ph"
-        fi
-    done
 }
 
 # All phase commits must land on a named feature branch so they're visible to
@@ -449,6 +459,26 @@ if [ "$SKIP_AIDER" = false ]; then
         case "$path" in
             *" "*)
                 logf_err "==> WARN: skipping path with embedded space: $path"
+                continue
+                ;;
+        esac
+        # Reject paths that escape the repo: planned entries are always
+        # repo-relative, so an absolute path or one with a '..' component is
+        # malformed (or injected). Skipping it here avoids creating placeholder
+        # files outside the working tree (mkdir -p / ': >' would otherwise write
+        # them). The slash-wrapping matches '..' only as a whole path component,
+        # so legitimate filenames like 'Foo..bar' are not rejected. The path is
+        # left out of FILE_ARGS, so the existence guard later reports it missing
+        # and the step is rejected cleanly with no out-of-repo side effects.
+        case "$path" in
+            /*)
+                logf_err "==> WARN: skipping absolute planned path (must be repo-relative): $path"
+                continue
+                ;;
+        esac
+        case "/$path/" in
+            *"/../"*)
+                logf_err "==> WARN: skipping planned path that escapes the repo: $path"
                 continue
                 ;;
         esac
