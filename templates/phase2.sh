@@ -517,6 +517,21 @@ if [ "$SKIP_AIDER" = false ]; then
         done
     fi
 
+    # Select --edit-format whole for purely greenfield steps (all editable targets
+    # are freshly-created placeholders). diff/SEARCH/REPLACE requires the model to
+    # emit a valid empty SEARCH block for brand-new files — a protocol local models
+    # reliably get wrong (the canonical failure: one import line repeated 175×).
+    # whole format sidesteps this: the model just outputs the complete new file.
+    # Not applied to mixed or existing-only steps: whole forces the model to
+    # reproduce the entire file, risking truncation on large files under the
+    # 10K-token context window.
+    EDIT_FMT_ARGS=()
+    _file_target_count=$(( ${#FILE_ARGS[@]} / 2 ))
+    if [ "$_file_target_count" -gt 0 ] && [ "$_file_target_count" -eq "${#_PLACEHOLDERS[@]}" ]; then
+        EDIT_FMT_ARGS=(--edit-format whole)
+        logf "==> All ${_file_target_count} target(s) are new files — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
+    fi
+
     # Live degenerate-output watchdog config. A local model can loop emitting the
     # same token sequence (import lines, class names) until the inference server
     # aborts — wasting the whole timeout window first. WATCHDOG_MAX is the number
@@ -555,6 +570,7 @@ if [ "$SKIP_AIDER" = false ]; then
         --read "$STEP_FILE" \
         --read CONTEXT.md \
         ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
+        ${EDIT_FMT_ARGS[@]+"${EDIT_FMT_ARGS[@]}"} \
         --no-auto-test \
         --yes \
         -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
