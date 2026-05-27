@@ -489,6 +489,12 @@ if [ "$SKIP_AIDER" = false ]; then
             # Exists but is not a regular file (e.g. a directory) — leave it for
             # the planned-file existence guard rather than placeholdering it.
             logf_err "==> WARN: planned path exists but is not a regular file (directory, symlink, special file?) — skipping as --file target: $path"
+        elif [ -L "$path" ]; then
+            # Dangling symlink: [ -e ] is false (link target is missing) but the
+            # symlink itself is present. Do NOT fall through to placeholder
+            # creation — ': > "$path"' would follow the link and write to
+            # wherever it points (potentially outside the repo tree). Skip it.
+            logf_err "==> WARN: planned path is a dangling symlink (target missing) — skipping as --file target: $path"
         else
             case "$path" in
                 */) ;;  # directory-style entry — nothing to create as a file
@@ -508,8 +514,9 @@ if [ "$SKIP_AIDER" = false ]; then
         logf_err "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." \
                  "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
-        logf_err "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none are regular files and none could be placeholdered." \
-                 "    Aider will create them from scratch; if existing files were intended, check the step file."
+        logf_err "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none could be added as --file targets" \
+                 "    (non-regular files, dangling symlinks, placeholder failures, or directory-style entries — see per-path WARNs above)." \
+                 "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#_PLACEHOLDERS[@]}" -gt 0 ]; then
         logf "==> Created ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s) so Aider edits real targets:"
         for _ph in "${_PLACEHOLDERS[@]}"; do
