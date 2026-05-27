@@ -488,7 +488,7 @@ if [ "$SKIP_AIDER" = false ]; then
         elif [ -e "$path" ]; then
             # Exists but is not a regular file (e.g. a directory) — leave it for
             # the planned-file existence guard rather than placeholdering it.
-            :
+            logf_err "==> WARN: planned path exists but is not a regular file (directory, symlink, special file?) — skipping as --file target: $path"
         else
             case "$path" in
                 */) ;;  # directory-style entry — nothing to create as a file
@@ -529,7 +529,7 @@ if [ "$SKIP_AIDER" = false ]; then
     _file_target_count=$(( ${#FILE_ARGS[@]} / 2 ))
     if [ "$_file_target_count" -gt 0 ] && [ "$_file_target_count" -eq "${#_PLACEHOLDERS[@]}" ]; then
         EDIT_FMT_ARGS=(--edit-format whole)
-        logf "==> All ${_file_target_count} target(s) are new files — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
+        logf "==> All ${_file_target_count} editable target(s) are new placeholders — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
     fi
 
     # Live degenerate-output watchdog config. A local model can loop emitting the
