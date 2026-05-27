@@ -108,6 +108,24 @@ _kill_tree() {
     kill -KILL "$pid" 2>/dev/null || true
 }
 
+# Remove placeholders we created for missing planned files that are still empty.
+# Aider populates a placeholder only when it produces a valid edit, so on every
+# failure path (watchdog kill, timeout, nonzero exit, token-limit/degenerate
+# aborts) the stub is left 0-byte. Leaving it behind would either block the next
+# run's dirty-tree guard (paths that clear the WIP sentinel) or let a 0-byte stub
+# masquerade as a created file in the existence guard (paths that keep it). Call
+# this before every failure exit after placeholders are created. Populated
+# placeholders are intentionally kept so the success path can commit them. The
+# ${arr[@]+...} guard is `set -u`-safe even before _PLACEHOLDERS is defined.
+_cleanup_empty_placeholders() {
+    local _ph
+    for _ph in ${_PLACEHOLDERS[@]+"${_PLACEHOLDERS[@]}"}; do
+        if [ -f "$_ph" ] && [ ! -s "$_ph" ]; then
+            rm -f "$_ph"
+        fi
+    done
+}
+
 # All phase commits must land on a named feature branch so they're visible to
 # `git branch` and to the post-Phase-3 merge step. Detached HEAD is detected
 # via exit status (not a string sentinel) to handle a real branch literally
@@ -523,13 +541,15 @@ if [ "$SKIP_AIDER" = false ]; then
 
     # Watchdog subshell: follow the log Aider is appending to (starting at the
     # current end, so prior verify output on the recovery path is not counted).
-    # The read loop exits 42 ONLY when it sees WATCHDOG_MAX identical non-trivial
-    # (>10 char, trailing whitespace ignored) lines in a row; the subshell then
-    # writes a marker and kills the aider tree. The distinct exit code is
-    # essential: on a normal finish the main shell tears this watchdog down with
-    # _kill_tree, which makes the loop exit via SIGKILL (137) or, if tail is
-    # killed first, via clean EOF (0) — neither must be read as a detection. Only
-    # 42 writes the marker.
+    # When the read loop sees WATCHDOG_MAX identical non-trivial (>10 char,
+    # trailing whitespace ignored) lines in a row, it writes the marker and kills
+    # the aider tree FROM INSIDE THE LOOP, then exits — it does not wait for the
+    # tail|loop pipeline to drain. That matters because tail -F only dies on its
+    # next write (SIGPIPE), which may never come if output stalls right at the
+    # threshold; acting inside the loop makes detection immediate. Writing the
+    # marker only on this genuine-detection branch also avoids false positives:
+    # on a normal finish the main shell SIGKILLs this subshell mid-read, so the
+    # threshold branch never runs and no marker is written.
     _WATCHDOG_SUBSHELL=""
     if [ "$WATCHDOG_OK" = true ]; then
         (
@@ -540,17 +560,16 @@ if [ "$SKIP_AIDER" = false ]; then
                   [ "${#_wline}" -gt 10 ] || continue
                   if [ "$_wline" = "$_wprev" ]; then
                       _wn=$((_wn + 1))
-                      [ "$_wn" -ge "$WATCHDOG_MAX" ] && exit 42
+                      if [ "$_wn" -ge "$WATCHDOG_MAX" ]; then
+                          printf 'x' > "$WATCHDOG_MARKER" 2>/dev/null || true
+                          _kill_tree "$_AIDER_SUBSHELL"
+                          exit 42
+                      fi
                   else
                       _wprev="$_wline"; _wn=1
                   fi
               done
           }
-          _wd_ps=("${PIPESTATUS[@]}")
-          if [ "${_wd_ps[1]:-1}" -eq 42 ]; then
-              printf 'x' > "$WATCHDOG_MARKER" 2>/dev/null || true
-              _kill_tree "$_AIDER_SUBSHELL"
-          fi
         ) &
         _WATCHDOG_SUBSHELL=$!
     fi
@@ -558,7 +577,7 @@ if [ "$SKIP_AIDER" = false ]; then
     wait "$_AIDER_SUBSHELL"
     AIDER_EXIT=$?
     # Tear down the watchdog and its tail/read-loop children. On a clean finish this
-    # SIGKILLs the watchdog before it reaches its marker+kill block; if it
+    # SIGKILLs the watchdog mid-read before it reaches the threshold branch; if it
     # already fired, this is a harmless no-op. `wait` reaps the killed subshell.
     if [ -n "$_WATCHDOG_SUBSHELL" ]; then
         _kill_tree "$_WATCHDOG_SUBSHELL"
@@ -575,6 +594,7 @@ if [ "$SKIP_AIDER" = false ]; then
         logf "==> Degenerate model output detected (watchdog: a non-trivial line repeated ${WATCHDOG_MAX}× in a row) — step $NEXT NOT recorded." \
              "    The local model looped emitting identical lines; aborted live to spare the 15-minute timeout window." \
              "    Inspect $LOG_FILE. Consider splitting this step, adding a server-side repetition penalty / max_tokens cap, or using a stronger model."
+        _cleanup_empty_placeholders
         rm -f "$WIP_FILE"
         exit 1
     fi
@@ -582,11 +602,13 @@ if [ "$SKIP_AIDER" = false ]; then
     # 124 = SIGTERM from timeout; 137 = SIGKILL from --kill-after (128 + 9).
     if { [ "$AIDER_EXIT" -eq 124 ] || [ "$AIDER_EXIT" -eq 137 ]; } && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
         logf "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
+        _cleanup_empty_placeholders
         exit 1
     fi
 
     if [ "$AIDER_EXIT" -ne 0 ]; then
         logf "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
+        _cleanup_empty_placeholders
         exit "$AIDER_EXIT"
     fi
 
@@ -597,6 +619,7 @@ if [ "$SKIP_AIDER" = false ]; then
     if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow|n_predict tokens limit)" "$LOG_FILE" 2>/dev/null; then
         logf "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded." \
              "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
+        _cleanup_empty_placeholders
         rm -f "$WIP_FILE"
         exit 1
     fi
@@ -615,11 +638,12 @@ if [ "$SKIP_AIDER" = false ]; then
         _repeat_max=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null \
             | sort | uniq -c | sort -rn \
             | awk 'NR==1{print $1; exit}')
-        if [ "${_repeat_max:-0}" -gt 30 ]; then
+        if [ "${_repeat_max:-0}" -ge "$WATCHDOG_MAX" ]; then
             logf "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded." \
                  "    The local model likely looped generating the same tokens until the inference server aborted." \
                  "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model." \
                  "    (The live watchdog normally catches this sooner; this backstop fires when Aider buffered the output and still exited 0.)"
+            _cleanup_empty_placeholders
             rm -f "$WIP_FILE"
             exit 1
         fi
@@ -637,16 +661,10 @@ if [ "$SKIP_AIDER" = false ]; then
     fi
 
     # Remove any placeholder we created for a missing planned file that Aider
-    # left empty. Otherwise the [ -e ] existence guard below would treat a 0-byte
-    # stub as "created" (masking the model's failure to populate it), and the
-    # empty file could be swept into the step commit.
-    if [ "${#_PLACEHOLDERS[@]}" -gt 0 ]; then
-        for _ph in "${_PLACEHOLDERS[@]}"; do
-            if [ -f "$_ph" ] && [ ! -s "$_ph" ]; then
-                rm -f "$_ph"
-            fi
-        done
-    fi
+    # left empty, so the existence guard below surfaces the model's failure
+    # rather than treating a 0-byte stub as "created". Populated placeholders
+    # are kept for the commit on the success path.
+    _cleanup_empty_placeholders
 
     # Halt detection: if the executor produced or modified plans/halt-stepNN.md
     # during this run, it intentionally stopped because a required prior artifact
@@ -674,7 +692,12 @@ if [ "$SKIP_AIDER" = false ]; then
 
     # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
     # If no files changed, the model was never reached — do not mark the step done.
-    if git diff --quiet && git diff --cached --quiet; then
+    # Use `git status --porcelain` (not `git diff`) so newly created *untracked*
+    # files count as changes — a greenfield step that only creates new files
+    # (e.g. populated placeholders Aider did not git-add) would otherwise be seen
+    # as "no changes" and wrongly rejected. Excludes match the commit step so the
+    # guard agrees with what would actually be committed.
+    if [ -z "$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null)" ]; then
         logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
         exit 1
     fi
