@@ -488,7 +488,13 @@ if [ "$SKIP_AIDER" = false ]; then
         elif [ -e "$path" ]; then
             # Exists but is not a regular file (e.g. a directory) — leave it for
             # the planned-file existence guard rather than placeholdering it.
-            :
+            logf_err "==> WARN: planned path exists but is not a regular file (directory, symlink, special file?) — skipping as --file target: $path"
+        elif [ -L "$path" ]; then
+            # Dangling symlink: [ -e ] is false (link target is missing) but the
+            # symlink itself is present. Do NOT fall through to placeholder
+            # creation — ': > "$path"' would follow the link and write to
+            # wherever it points (potentially outside the repo tree). Skip it.
+            logf_err "==> WARN: planned path is a dangling symlink (target missing) — skipping as --file target: $path"
         else
             case "$path" in
                 */) ;;  # directory-style entry — nothing to create as a file
@@ -508,13 +514,29 @@ if [ "$SKIP_AIDER" = false ]; then
         logf_err "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." \
                  "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
-        logf_err "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none are regular files and none could be placeholdered." \
-                 "    Aider will create them from scratch; if existing files were intended, check the step file."
+        logf_err "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none could be added as --file targets" \
+                 "    (non-regular files, dangling symlinks, placeholder failures, or directory-style entries — see per-path WARNs above)." \
+                 "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#_PLACEHOLDERS[@]}" -gt 0 ]; then
         logf "==> Created ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s) so Aider edits real targets:"
         for _ph in "${_PLACEHOLDERS[@]}"; do
             logf "    placeholder: $_ph"
         done
+    fi
+
+    # Select --edit-format whole for purely greenfield steps (all editable targets
+    # are freshly-created placeholders). diff/SEARCH/REPLACE requires the model to
+    # emit a valid empty SEARCH block for brand-new files — a protocol local models
+    # reliably get wrong (the canonical failure: one import line repeated 175×).
+    # whole format sidesteps this: the model just outputs the complete new file.
+    # Not applied to mixed or existing-only steps: whole forces the model to
+    # reproduce the entire file, risking truncation on large files under the
+    # 10K-token context window.
+    EDIT_FMT_ARGS=()
+    _file_target_count=$(( ${#FILE_ARGS[@]} / 2 ))
+    if [ "$_file_target_count" -gt 0 ] && [ "$_file_target_count" -eq "${#_PLACEHOLDERS[@]}" ]; then
+        EDIT_FMT_ARGS=(--edit-format whole)
+        logf "==> All ${_file_target_count} editable target(s) are new placeholders — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
     fi
 
     # Live degenerate-output watchdog config. A local model can loop emitting the
@@ -555,6 +577,7 @@ if [ "$SKIP_AIDER" = false ]; then
         --read "$STEP_FILE" \
         --read CONTEXT.md \
         ${FILE_ARGS[@]+"${FILE_ARGS[@]}"} \
+        ${EDIT_FMT_ARGS[@]+"${EDIT_FMT_ARGS[@]}"} \
         --no-auto-test \
         --yes \
         -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
