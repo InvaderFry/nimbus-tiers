@@ -79,8 +79,37 @@ cleanup_lock() {
 }
 _AIDER_SUBSHELL=""
 _PREFLIGHT_SUBSHELL=""
+_WATCHDOG_SUBSHELL=""
+# Initialized before the traps are armed so _cleanup_empty_placeholders (called
+# from _handle_signal) is safe even if a signal lands before the FILE_ARGS loop
+# populates it. The loop re-initializes it to () in the SKIP_AIDER=false path.
+_PLACEHOLDERS=()
+
+# Remove placeholders we created for missing planned files that are still empty.
+# Aider populates a placeholder only when it produces a valid edit, so on every
+# failure path (watchdog kill, timeout, nonzero exit, token-limit/degenerate
+# aborts) the stub is left 0-byte. Leaving it behind would either block the next
+# run's dirty-tree guard (paths that clear the WIP sentinel) or let a 0-byte stub
+# masquerade as a created file in the existence guard (paths that keep it). Call
+# this before every failure exit after placeholders are created. Populated
+# placeholders are intentionally kept so the success path can commit them. The
+# ${arr[@]+...} guard is `set -u`-safe even before _PLACEHOLDERS is defined.
+_cleanup_empty_placeholders() {
+    local _ph
+    for _ph in ${_PLACEHOLDERS[@]+"${_PLACEHOLDERS[@]}"}; do
+        if [ -f "$_ph" ] && [ ! -s "$_ph" ]; then
+            rm -f "$_ph"
+        fi
+    done
+}
+
 _handle_signal() {
     cleanup_lock
+    # Remove empty placeholders before the group is killed. Without this an
+    # interrupt after placeholder creation leaves 0-byte stubs behind; the WIP
+    # sentinel persists, so the next run treats them as pre-existing files (not
+    # placeholders), bypassing the empty-stub cleanup and existence guard.
+    _cleanup_empty_placeholders
     # kill -KILL on the subshell process only; children (aider, tee, verify.sh)
     # inside it are NOT forwarded the signal — they survive until kill -KILL 0
     # kills the entire process group on the next line.
@@ -88,10 +117,24 @@ _handle_signal() {
     # immediately on Ctrl+C instead of being deferred until the pipeline exits.
     [ -n "${_PREFLIGHT_SUBSHELL:-}" ] && kill -KILL "$_PREFLIGHT_SUBSHELL" 2>/dev/null || true
     [ -n "${_AIDER_SUBSHELL:-}" ] && kill -KILL "$_AIDER_SUBSHELL" 2>/dev/null || true
+    [ -n "${_WATCHDOG_SUBSHELL:-}" ] && kill -KILL "$_WATCHDOG_SUBSHELL" 2>/dev/null || true
     kill -KILL 0 2>/dev/null || true
 }
 trap '_handle_signal' INT TERM
 trap 'cleanup_lock' EXIT
+
+# Recursively SIGKILL a process and all of its descendants. Used by the
+# degenerate-output watchdog to tear down just the aider pipeline (timeout,
+# aider, tee) — unlike the signal handler's `kill -KILL 0`, which kills the
+# whole process group and would also take down the watchdog and main script.
+# Relies on `pgrep -P`; the watchdog is only enabled when that is available.
+_kill_tree() {
+    local pid="$1" child
+    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+        _kill_tree "$child"
+    done
+    kill -KILL "$pid" 2>/dev/null || true
+}
 
 # All phase commits must land on a named feature branch so they're visible to
 # `git branch` and to the post-Phase-3 merge step. Detached HEAD is detected
@@ -224,6 +267,22 @@ if [ -f "$LOG_FILE" ]; then
     done
     LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
 fi
+
+# Step-log diagnostics. Aider and verify.sh output is teed into $LOG_FILE by
+# their pipelines, but the script's own "==> ..." messages (timeouts,
+# degenerate-output aborts, missing-file errors, verify failures) previously
+# went only to the terminal — so a saved step log could not explain why a step
+# failed. logf/logf_err mirror those messages into $LOG_FILE too. Each argument
+# is printed on its own line. The append is best-effort: failures (e.g. a
+# read-only dir) are swallowed so logging never aborts the run under `set -e`.
+logf() {
+    printf '%s\n' "$@"
+    printf '%s\n' "$@" >> "$LOG_FILE" 2>/dev/null || true
+}
+logf_err() {
+    printf '%s\n' "$@" >&2
+    printf '%s\n' "$@" >> "$LOG_FILE" 2>/dev/null || true
+}
 
 # Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally
 # underspecified step. Note: aider does not expose a --max-reflections flag
@@ -384,33 +443,97 @@ _strip_md_path() {
 }
 
 if [ "$SKIP_AIDER" = false ]; then
-    # Pass each existing planned path as --file so Aider sees real content
-    # instead of hallucinating SEARCH blocks. Paths with embedded spaces are
-    # skipped — bash word-splitting would complicate the --file plumbing and
-    # real paths in these projects never contain spaces.
+    # Pass each planned path as --file so Aider edits a real on-disk target
+    # instead of hallucinating from-scratch SEARCH blocks (which local models
+    # botch — the degenerate import-spam loop is the canonical failure). Existing
+    # regular files are passed directly; missing files get an empty placeholder
+    # created first so Aider still receives them as editable --file arguments.
+    # Paths with embedded spaces are skipped — bash word-splitting would
+    # complicate the --file plumbing and real paths here never contain spaces.
     FILE_ARGS=()
     PARSED_COUNT=0
+    _PLACEHOLDERS=()
     while IFS= read -r f; do
         path=$(_strip_md_path "$f")
         [ -z "$path" ] && continue
         case "$path" in
             *" "*)
-                echo "==> WARN: skipping path with embedded space: $path" >&2
+                logf_err "==> WARN: skipping path with embedded space: $path"
+                continue
+                ;;
+        esac
+        # Reject paths that escape the repo: planned entries are always
+        # repo-relative, so an absolute path or one with a '..' component is
+        # malformed (or injected). Skipping it here avoids creating placeholder
+        # files outside the working tree (mkdir -p / ': >' would otherwise write
+        # them). The slash-wrapping matches '..' only as a whole path component,
+        # so legitimate filenames like 'Foo..bar' are not rejected. The path is
+        # left out of FILE_ARGS, so the existence guard later reports it missing
+        # and the step is rejected cleanly with no out-of-repo side effects.
+        case "$path" in
+            /*)
+                logf_err "==> WARN: skipping absolute planned path (must be repo-relative): $path"
+                continue
+                ;;
+        esac
+        case "/$path/" in
+            *"/../"*)
+                logf_err "==> WARN: skipping planned path that escapes the repo: $path"
                 continue
                 ;;
         esac
         PARSED_COUNT=$((PARSED_COUNT + 1))
         if [ -f "$path" ]; then
             FILE_ARGS+=("--file" "$path")
+        elif [ -e "$path" ]; then
+            # Exists but is not a regular file (e.g. a directory) — leave it for
+            # the planned-file existence guard rather than placeholdering it.
+            :
+        else
+            case "$path" in
+                */) ;;  # directory-style entry — nothing to create as a file
+                *)
+                    if mkdir -p "$(dirname "$path")" 2>/dev/null && : > "$path" 2>/dev/null; then
+                        _PLACEHOLDERS+=("$path")
+                        FILE_ARGS+=("--file" "$path")
+                    else
+                        logf_err "==> WARN: could not create placeholder for planned file: $path"
+                    fi
+                    ;;
+            esac
         fi
     done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
 
     if [ "$PARSED_COUNT" -eq 0 ]; then
-        echo "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." >&2
-        echo "    Aider will run without explicit --file args and may hallucinate SEARCH blocks." >&2
+        logf_err "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." \
+                 "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
-        echo "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none exist on disk yet." >&2
-        echo "    Aider will create them from scratch; if existing files were intended, check the step file." >&2
+        logf_err "==> WARN: '## Files to change' lists $PARSED_COUNT path(s) but none are regular files and none could be placeholdered." \
+                 "    Aider will create them from scratch; if existing files were intended, check the step file."
+    elif [ "${#_PLACEHOLDERS[@]}" -gt 0 ]; then
+        logf "==> Created ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s) so Aider edits real targets:"
+        for _ph in "${_PLACEHOLDERS[@]}"; do
+            logf "    placeholder: $_ph"
+        done
+    fi
+
+    # Live degenerate-output watchdog config. A local model can loop emitting the
+    # same token sequence (import lines, class names) until the inference server
+    # aborts — wasting the whole timeout window first. WATCHDOG_MAX is the number
+    # of consecutive identical non-trivial (>10 char) output lines that count as a
+    # loop. The watchdog needs `tail -F` (follow-by-name with retry) to read the
+    # log Aider is writing and `pgrep` to find aider's children for the kill; if
+    # either is missing it is disabled and the post-Aider guard below still
+    # catches the (slower) exit-0 case. Detection uses a bash `read` loop rather
+    # than awk on purpose: the common awk (mawk) block-buffers pipe input and
+    # never processes tail -F's trickle until EOF, which never comes — so awk
+    # would miss the loop entirely. WIP_FILE lives in .git/; reuse that dir.
+    WATCHDOG_MAX=30
+    WATCHDOG_MARKER=".git/phase2-watchdog-step${STEP_PAD}"
+    rm -f "$WATCHDOG_MARKER"
+    WATCHDOG_OK=false
+    if command -v tail >/dev/null 2>&1 && command -v pgrep >/dev/null 2>&1; then
+        WATCHDOG_OK=true
     fi
 
     touch "$WIP_FILE"
@@ -445,18 +568,77 @@ if [ "$SKIP_AIDER" = false ]; then
       exit "$_aider_rc"
     ) &
     _AIDER_SUBSHELL=$!
+
+    # Watchdog subshell: follow the log Aider is appending to (starting at the
+    # current end, so prior verify output on the recovery path is not counted).
+    # When the read loop sees WATCHDOG_MAX identical non-trivial (>10 char,
+    # trailing whitespace ignored) lines in a row, it writes the marker and kills
+    # the aider tree FROM INSIDE THE LOOP, then exits — it does not wait for the
+    # tail|loop pipeline to drain. That matters because tail -F only dies on its
+    # next write (SIGPIPE), which may never come if output stalls right at the
+    # threshold; acting inside the loop makes detection immediate. Writing the
+    # marker only on this genuine-detection branch also avoids false positives:
+    # on a normal finish the main shell SIGKILLs this subshell mid-read, so the
+    # threshold branch never runs and no marker is written.
+    _WATCHDOG_SUBSHELL=""
+    if [ "$WATCHDOG_OK" = true ]; then
+        (
+          tail -n 0 -F "$LOG_FILE" 2>/dev/null | {
+              _wprev=""; _wn=0
+              while IFS= read -r _wline; do
+                  _wline="${_wline%"${_wline##*[![:space:]]}"}"   # strip trailing whitespace
+                  [ "${#_wline}" -gt 10 ] || continue
+                  if [ "$_wline" = "$_wprev" ]; then
+                      _wn=$((_wn + 1))
+                      if [ "$_wn" -ge "$WATCHDOG_MAX" ]; then
+                          printf 'x' > "$WATCHDOG_MARKER" 2>/dev/null || true
+                          _kill_tree "$_AIDER_SUBSHELL"
+                          exit 42
+                      fi
+                  else
+                      _wprev="$_wline"; _wn=1
+                  fi
+              done
+          }
+        ) &
+        _WATCHDOG_SUBSHELL=$!
+    fi
+
     wait "$_AIDER_SUBSHELL"
     AIDER_EXIT=$?
+    # Tear down the watchdog and its tail/read-loop children. On a clean finish this
+    # SIGKILLs the watchdog mid-read before it reaches the threshold branch; if it
+    # already fired, this is a harmless no-op. `wait` reaps the killed subshell.
+    if [ -n "$_WATCHDOG_SUBSHELL" ]; then
+        _kill_tree "$_WATCHDOG_SUBSHELL"
+        wait "$_WATCHDOG_SUBSHELL" 2>/dev/null || true
+        _WATCHDOG_SUBSHELL=""
+    fi
     set -e
+
+    # Watchdog fired: a degenerate generation loop was caught live and the aider
+    # tree was killed. Report and bail before the generic exit-code checks — the
+    # exit code reflects our kill, not aider's own outcome.
+    if [ -f "$WATCHDOG_MARKER" ]; then
+        rm -f "$WATCHDOG_MARKER"
+        logf "==> Degenerate model output detected (watchdog: a non-trivial line repeated ${WATCHDOG_MAX}× in a row) — step $NEXT NOT recorded." \
+             "    The local model looped emitting identical lines; aborted live to spare the 15-minute timeout window." \
+             "    Inspect $LOG_FILE. Consider splitting this step, adding a server-side repetition penalty / max_tokens cap, or using a stronger model."
+        _cleanup_empty_placeholders
+        rm -f "$WIP_FILE"
+        exit 1
+    fi
 
     # 124 = SIGTERM from timeout; 137 = SIGKILL from --kill-after (128 + 9).
     if { [ "$AIDER_EXIT" -eq 124 ] || [ "$AIDER_EXIT" -eq 137 ]; } && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
-        echo "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
+        logf "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
+        _cleanup_empty_placeholders
         exit 1
     fi
 
     if [ "$AIDER_EXIT" -ne 0 ]; then
-        echo "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
+        logf "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
+        _cleanup_empty_placeholders
         exit "$AIDER_EXIT"
     fi
 
@@ -465,8 +647,9 @@ if [ "$SKIP_AIDER" = false ]; then
     # repeated imports that fill the context, then nothing). Treat any such log
     # entry as a hard failure so the step is not recorded as done.
     if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow|n_predict tokens limit)" "$LOG_FILE" 2>/dev/null; then
-        echo "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded."
-        echo "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
+        logf "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded." \
+             "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
+        _cleanup_empty_placeholders
         rm -f "$WIP_FILE"
         exit 1
     fi
@@ -485,10 +668,12 @@ if [ "$SKIP_AIDER" = false ]; then
         _repeat_max=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null \
             | sort | uniq -c | sort -rn \
             | awk 'NR==1{print $1; exit}')
-        if [ "${_repeat_max:-0}" -gt 30 ]; then
-            echo "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded."
-            echo "    The local model likely looped generating the same tokens until litellm aborted."
-            echo "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model."
+        if [ "${_repeat_max:-0}" -ge "$WATCHDOG_MAX" ]; then
+            logf "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded." \
+                 "    The local model likely looped generating the same tokens until the inference server aborted." \
+                 "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model." \
+                 "    (The live watchdog normally catches this sooner; this backstop fires when Aider buffered the output and still exited 0.)"
+            _cleanup_empty_placeholders
             rm -f "$WIP_FILE"
             exit 1
         fi
@@ -501,9 +686,15 @@ if [ "$SKIP_AIDER" = false ]; then
     # log captures the signal; if verify.sh also fails, the combined log gives
     # full context for root-cause analysis.
     if [ -f "$LOG_FILE" ] && grep -qiE "(Summarization failed|summarizer unexpectedly failed|Traceback \(most recent call last\)|unhandled exception)" "$LOG_FILE" 2>/dev/null; then
-        echo "==> WARN: Aider internal failure detected (summarization error or exception) — see $LOG_FILE." >&2
-        echo "    Proceeding to verify.sh; if it fails, Aider may have produced partial output." >&2
+        logf_err "==> WARN: Aider internal failure detected (summarization error or exception) — see $LOG_FILE." \
+                 "    Proceeding to verify.sh; if it fails, Aider may have produced partial output."
     fi
+
+    # Remove any placeholder we created for a missing planned file that Aider
+    # left empty, so the existence guard below surfaces the model's failure
+    # rather than treating a 0-byte stub as "created". Populated placeholders
+    # are kept for the commit on the success path.
+    _cleanup_empty_placeholders
 
     # Halt detection: if the executor produced or modified plans/halt-stepNN.md
     # during this run, it intentionally stopped because a required prior artifact
@@ -516,9 +707,9 @@ if [ "$SKIP_AIDER" = false ]; then
     # untracked, modified, or staged. A halt file committed in a previous run
     # would be clean, so this check fires only for halts produced *this run*.
     if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
-        echo "==> Step $NEXT halted: $HALT_FILE was written by the executor."
-        echo "    Discarding any unrelated in-tree changes from this run."
-        echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
+        logf "==> Step $NEXT halted: $HALT_FILE was written by the executor." \
+             "    Discarding any unrelated in-tree changes from this run." \
+             "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
         git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
         git add -- "$HALT_FILE"                       # restage only the halt file
         git commit -m "Step $NEXT: HALT (missing prior artifact)"
@@ -531,25 +722,30 @@ if [ "$SKIP_AIDER" = false ]; then
 
     # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
     # If no files changed, the model was never reached — do not mark the step done.
-    if git diff --quiet && git diff --cached --quiet; then
-        echo "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+    # Use `git status --porcelain` (not `git diff`) so newly created *untracked*
+    # files count as changes — a greenfield step that only creates new files
+    # (e.g. populated placeholders Aider did not git-add) would otherwise be seen
+    # as "no changes" and wrongly rejected. Excludes match the commit step so the
+    # guard agrees with what would actually be committed.
+    if [ -z "$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null)" ]; then
+        logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
         exit 1
     fi
 
 fi
 
 # Halt detection — recovery path: inside SKIP_AIDER=false the halt check fires
-# if Aider wrote the halt file during this run (lines 473–494). But if that run
-# was killed between halt-file creation and the halt commit, the WIP sentinel
-# persists and the next invocation takes the SKIP_AIDER=true path, bypassing
-# the inner block entirely. This outer check catches that case so the halt
-# report is always committed and exit 2 is always returned on a halt.
+# if Aider wrote the halt file during this run (the inner halt block above). But
+# if that run was killed between halt-file creation and the halt commit, the WIP
+# sentinel persists and the next invocation takes the SKIP_AIDER=true path,
+# bypassing the inner block entirely. This outer check catches that case so the
+# halt report is always committed and exit 2 is always returned on a halt.
 # On the SKIP_AIDER=false path this check is unreachable: the inner halt block
 # already exited 2 before we reach here.
 if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
-    echo "==> Step $NEXT halted (recovery): $HALT_FILE was written by the prior run."
-    echo "    Discarding any unrelated in-tree changes."
-    echo "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
+    logf "==> Step $NEXT halted (recovery): $HALT_FILE was written by the prior run." \
+         "    Discarding any unrelated in-tree changes." \
+         "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
     git reset -q HEAD -- . 2>/dev/null || true
     git add -- "$HALT_FILE"
     git commit -m "Step $NEXT: HALT (missing prior artifact)"
@@ -568,10 +764,10 @@ fi
 _MP=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
         | grep -E '\*\*' || true)
 if [ -n "$_MP" ]; then
-    echo "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded."
-    echo "    Pattern '**' found in the following working-tree paths:"
-    printf '%s\n' "$_MP" | sed 's/^/    /'
-    echo "    Discarding malformed files and resetting working tree."
+    logf "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded." \
+         "    Pattern '**' found in the following working-tree paths:"
+    while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP"
+    logf "    Discarding malformed files and resetting working tree."
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
     rm -f "$WIP_FILE"
@@ -589,8 +785,8 @@ while IFS= read -r _pf; do
     [ -e "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
 done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
 if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
-    echo "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
-    printf '    missing: %s\n' "${_MISSING_PLANNED[@]}"
+    logf "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
+    for _m in "${_MISSING_PLANNED[@]}"; do logf "    missing: $_m"; done
     if [ "$SKIP_AIDER" = true ]; then
         # Recovery path: the prior Aider run may have left partial changes.
         # Preserve WIP_FILE when the tree is dirty so the next invocation retries
@@ -600,19 +796,19 @@ if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
         # invocation runs Aider fresh instead of looping through SKIP_AIDER=true.
         _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
         if [ -n "$_RECOVERY_DIRTY" ]; then
-            echo "    The prior Aider run left uncommitted partial changes in the working tree."
-            echo "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to"
-            echo "    complete the step. To discard partial changes and start fresh:"
-            echo "      git checkout -- . && git clean -fd && rm -f '${WIP_FILE}'"
+            logf "    The prior Aider run left uncommitted partial changes in the working tree." \
+                 "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to" \
+                 "    complete the step. To discard partial changes and start fresh:" \
+                 "      git checkout -- . && git clean -fd && rm -f '${WIP_FILE}'"
         else
-            echo "    The prior Aider run appears to have made no changes. Re-running"
-            echo "    ./phase2.sh will invoke Aider fresh to complete the step."
+            logf "    The prior Aider run appears to have made no changes. Re-running" \
+                 "    ./phase2.sh will invoke Aider fresh to complete the step."
             rm -f "$WIP_FILE"
         fi
     else
-        echo "    Aider may have skipped creating these paths. Inspect $LOG_FILE."
-        echo "    Note: non-parenthesis annotations (em-dash, colon) on list entries are"
-        echo "    not stripped and cause the entry to be silently skipped. Use '(note)' format."
+        logf "    Aider may have skipped creating these paths. Inspect $LOG_FILE." \
+             "    Note: non-parenthesis annotations (em-dash, colon) on list entries are" \
+             "    not stripped and cause the entry to be silently skipped. Use '(note)' format."
         rm -f "$WIP_FILE"
     fi
     exit 1
@@ -632,7 +828,7 @@ set -e
 VERIFY_EXIT="${_verify_ps[0]}"
 _verify_tee_rc="${_verify_ps[1]:-0}"
 if [ "$_verify_tee_rc" -ne 0 ]; then
-    echo "==> WARN: tee failed writing $LOG_FILE (exit ${_verify_tee_rc} — disk full?)" >&2
+    logf_err "==> WARN: tee failed writing $LOG_FILE (exit ${_verify_tee_rc} — disk full?)"
 fi
 if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
@@ -642,8 +838,8 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     rm -f "$WIP_FILE"
     DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
     log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
-    echo "==> Step $NEXT committed."
+    logf "==> Step $NEXT committed."
 else
-    echo "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
+    logf "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
     exit 1
 fi
