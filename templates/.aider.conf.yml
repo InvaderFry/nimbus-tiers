@@ -19,6 +19,8 @@ test-cmd: {{TEST_CMD}}
 
 # Token budget — Qwen3-32B on 16GB has a 10K token context window.
 # Disabling the repo map and using diff edits reclaims ~2K tokens per session.
+# Note: phase2.sh overrides edit-format to 'whole' for purely greenfield steps
+# (all planned files are new). This conf value is the fallback for all other steps.
 map-tokens: 0
 edit-format: diff
 

@@ -122,6 +122,15 @@ Each step must:
 Avoid steps whose only work is creating a single empty file or adding one
 import. Combine trivial actions into a meaningful step.
 
+When creating new files, prefer steps where **all** editable targets are new
+(none exist on disk). Such purely-greenfield steps let the executor use
+`--edit-format whole`, which is more reliable for local models than the
+default SEARCH/REPLACE format. This is not a reason to split a step
+artificially — a greenfield step must still deliver substantive content
+(e.g. a complete class, not an empty stub). The rule against trivial steps
+takes precedence; isolate new-file creation only when the content is
+meaningful on its own.
+
 Do not include implementation code. Do not mark any step DONE.
 
 ### 2. TESTS.md
