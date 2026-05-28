@@ -131,6 +131,32 @@ artificially — a greenfield step must still deliver substantive content
 takes precedence; isolate new-file creation only when the content is
 meaningful on its own.
 
+Conversely, be deliberate about steps that **edit existing files**. Existing
+files are edited with the SEARCH/REPLACE format, never `whole` (the executor
+only selects `whole` when every target is a freshly-created file). A step that
+*substantially rewrites* an existing file is therefore greenfield-scale
+generation without the `whole`-format safety net — the canonical local-model
+failure, where an import line or declaration repeats until the inference
+server aborts. Two rules apply, and they are not interchangeable — the first
+prevents the loop, the second only limits its damage:
+
+- **First, shrink the generation: prefer the smallest targeted change** that
+  achieves the goal (remove the obsolete method, add the new one) over a
+  full-file rewrite of an existing file. This is the rule that actually
+  prevents the loop, because the loop happens *inside* the regenerated block —
+  a smaller block has less to spiral on. It trades one failure mode for a
+  smaller one: a targeted SEARCH/REPLACE edit must reproduce a unique,
+  exactly-matching anchor region (whitespace included), which local models can
+  also botch — so instruct the executor to anchor on a small, stable,
+  unambiguous region.
+- **Then, contain the blast radius: do not bundle two substantial
+  existing-file rewrites in one step.** Give each its own step. This only
+  *limits* damage — it does not prevent the loop, because each rewrite can
+  still spiral on its own. Splitting without also shrinking each rewrite just
+  moves the same failure into the next step. If a near-total rewrite of an
+  existing file is genuinely unavoidable, isolate it in its own step rather
+  than bundling it.
+
 Do not include implementation code. Do not mark any step DONE.
 
 ### 2. TESTS.md
@@ -413,3 +439,27 @@ these constraints. Omit sections for languages not used in the project.
   it, and not to fall back to the deprecated `RestTemplate` without noting
   the downgrade explicitly. A missing `RestClient` bean causes a runtime
   startup failure that unit tests (which mock the service) will not catch.
+- **Spring test rewrites are a degeneration trigger:** fully rewriting an
+  existing test class that pulls in `@SpringBootTest` + `@MockBean` (or the
+  newer `@MockitoBean`) is import-heavy and version-sensitive — a leading
+  cause of the local model looping on import lines until the watchdog kills
+  it. For any step that touches an existing test class:
+    - **Keep the edit targeted.** Delete the obsolete test method and add the
+      new one; do not instruct a full-file regeneration of the test class.
+      This is what avoids the import-spam loop.
+    - **When the wired component runs on startup, assert its behavior in the
+      same `@SpringBootTest`.** The wiring guardrail requires a context-load
+      test, and if the component runs on startup (`CommandLineRunner`,
+      `ApplicationRunner`) that context test must mock its collaborators with
+      `@MockBean`/`@MockitoBean` anyway — the runner executes during
+      `@SpringBootTest` startup and would otherwise make a real call (violating
+      the no-live-network invariant) or fail. Since that mock already exists,
+      assert the startup behavior using that *same* mock in the *same* test
+      class rather than spinning up a second `@SpringBootTest` that re-mocks the
+      same collaborator to check the same behavior — duplicate slice tests
+      enlarge the import surface that causes the loop. (A focused unit test plus
+      one thin wiring test is fine and expected; this is about not duplicating
+      the *same* assertion across two heavyweight harnesses.)
+    - **Reserve a plain unit test** (`new App(Mockito.mock(Service.class))`)
+      **for pure logic with no Spring wiring**, where no context-load test is
+      required. Do not use it as a substitute for the wiring test above.

@@ -539,6 +539,21 @@ if [ "$SKIP_AIDER" = false ]; then
         logf "==> All ${_file_target_count} editable target(s) are new placeholders — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
     fi
 
+    # Advisory: warn when a step targets more than one existing (non-placeholder)
+    # file. Existing files are edited with diff/SEARCH/REPLACE (never whole), and a
+    # substantial existing-file rewrite is the canonical setup for a degenerate
+    # generation loop — the model spirals inside the regenerated block. phase2.sh
+    # cannot tell a small targeted edit from a full rewrite, so this is a heuristic
+    # nudge, not a gate (it may over-fire on two small edits). Non-fatal; mirrors
+    # the token-cap warning. The planning rule is in PHASE1_SPEC §1 (PLAN.md, "edit
+    # existing files"): shrink each edit to a targeted change first, and only then
+    # isolate any unavoidable full rewrite into its own step — splitting alone does
+    # not prevent the loop.
+    _existing_target_count=$(( _file_target_count - ${#_PLACEHOLDERS[@]} ))
+    if [ "$_existing_target_count" -gt 1 ]; then
+        logf_err "==> WARN: step targets ${_existing_target_count} existing files. Local models can loop regenerating large existing-file blocks. Prefer making each a small targeted edit rather than a full rewrite; isolate any unavoidable full rewrite into its own step (see PHASE1_SPEC §1)."
+    fi
+
     # Live degenerate-output watchdog config. A local model can loop emitting the
     # same token sequence (import lines, class names) until the inference server
     # aborts — wasting the whole timeout window first. WATCHDOG_MAX is the number
