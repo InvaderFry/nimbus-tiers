@@ -661,7 +661,7 @@ if [ "$SKIP_AIDER" = false ]; then
         rm -f "$WATCHDOG_MARKER"
         logf "==> Degenerate model output detected (watchdog: a non-trivial line repeated ${WATCHDOG_MAX}× in a row) — step $NEXT NOT recorded." \
              "    The local model looped emitting identical lines; aborted live to spare the 15-minute timeout window." \
-             "    Inspect $LOG_FILE. Consider splitting this step, adding a server-side repetition penalty / max_tokens cap, or using a stronger model."
+             "    This is a model/cache QUALITY failure. Inspect $LOG_FILE. If repetition_penalty/DRY are already on and it still loops, the usual culprit is a low-bit quantized KV cache (cache_mode 2/3-bit) — move to 8,8 or FP16, disable reasoning/thinking for execution, or use a stronger/coder model. Splitting the step is only a stopgap."
         _cleanup_empty_placeholders
         rm -f "$WIP_FILE"
         exit 1
@@ -681,15 +681,47 @@ if [ "$SKIP_AIDER" = false ]; then
     fi
 
     # Token-limit guard: some local models emit a "token limit" message and still
-    # exit 0, but produce a truncated or malformed response (e.g. hundreds of
-    # repeated imports that fill the context, then nothing). Treat any such log
-    # entry as a hard failure so the step is not recorded as done.
-    if [ -f "$LOG_FILE" ] && grep -qiE "(has hit a token limit|token limit exceeded|context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow|n_predict tokens limit)" "$LOG_FILE" 2>/dev/null; then
-        logf "==> Model hit a token limit — output may be truncated or malformed. Step $NEXT NOT recorded." \
-             "    Inspect $LOG_FILE. Consider splitting this step or reducing CONTEXT.md."
-        _cleanup_empty_placeholders
-        rm -f "$WIP_FILE"
-        exit 1
+    # exit 0, but produce a truncated or malformed response. Crucially, two very
+    # different failures both surface as "token limit" and must NOT be conflated:
+    #
+    #   (a) INPUT/context overflow — the prompt (CONTEXT.md + step file + target
+    #       files) genuinely did not fit. Fix by reducing input.
+    #   (b) OUTPUT truncation (finish_reason=length) — the *response* was cut off
+    #       at the output budget. aider prints "has hit a token limit" for ANY
+    #       finish_reason=length, so this looks identical to (a) but the input was
+    #       usually nowhere near the limit. The common driver on a low-bit
+    #       quantized KV cache is a DEGENERATE REPETITION LOOP that burns the
+    #       output budget on garbage — a model/cache QUALITY problem, not a size
+    #       one. Telling the user to "reduce CONTEXT.md" here sends them down the
+    #       wrong path (this is exactly how the 0529 Step 3 failure was misread).
+    #
+    # Classify the two cases and give guidance that matches the actual cause.
+    if [ -f "$LOG_FILE" ]; then
+        if grep -qiE "(context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow)" "$LOG_FILE" 2>/dev/null; then
+            logf "==> INPUT exceeded the model's context window — step $NEXT NOT recorded." \
+                 "    The prompt (CONTEXT.md + step file + target files) was too large to fit." \
+                 "    Inspect $LOG_FILE. Reduce CONTEXT.md, shorten this step's 'Files to change' list, or raise max_seq_len/cache_size on the inference server."
+            _cleanup_empty_placeholders
+            rm -f "$WIP_FILE"
+            exit 1
+        fi
+        if grep -qiE "(has hit a token limit|token limit exceeded|n_predict tokens limit|finish_reason.{0,12}length)" "$LOG_FILE" 2>/dev/null; then
+            # Did a single non-trivial line dominate the output? If so the model
+            # looped and the cap merely terminated it — quality, not size.
+            _rep=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null | sort | uniq -c | sort -rn | awk 'NR==1{print $1; exit}')
+            if [ "${_rep:-0}" -ge "$WATCHDOG_MAX" ]; then
+                logf "==> OUTPUT truncated at the token cap AFTER a degenerate repetition loop (a line repeated ${_rep}×) — step $NEXT NOT recorded." \
+                     "    This is a model/cache QUALITY failure, not a size problem: the model looped on repeated/garbage lines and the max_tokens cap ended it." \
+                     "    Inspect $LOG_FILE. Raising max_tokens alone will likely just yield a LONGER broken file. Prefer: move off a low-bit KV cache (e.g. cache_mode 2/3-bit -> 8,8 or FP16), disable reasoning/thinking for execution, or use a stronger/coder model. Splitting the step is only a stopgap."
+            else
+                logf "==> OUTPUT hit the token cap (finish_reason=length) with no obvious loop — step $NEXT NOT recorded." \
+                     "    The generation was legitimately larger than the output budget." \
+                     "    Inspect $LOG_FILE. Raise the server max_tokens cap and/or split this step so it generates fewer/smaller files per run. Input/CONTEXT.md size is usually NOT the issue here."
+            fi
+            _cleanup_empty_placeholders
+            rm -f "$WIP_FILE"
+            exit 1
+        fi
     fi
 
     # Repeated-output (degenerate generation) guard: local models can enter a loop

@@ -17,7 +17,14 @@ auto-commits: true
 auto-test: true
 test-cmd: {{TEST_CMD}}
 
-# Token budget — Qwen3-32B on 16GB has a 10K token context window.
+# Token budget. NOTE: the current Qwen3-32B/TabbyAPI setup is capped at a ~10K
+# max_seq_len (config.yml) only because a 32B model barely fits 16GB — that is a
+# VRAM-forced limit, not the model's native context. max_seq_len bounds INPUT;
+# the OUTPUT budget per completion is a separate server-side cap (nimbus.yml
+# max_tokens). A run can fail on either axis, and they have different fixes — see
+# the failure classification in phase2.sh. If you swap to a model that fits 16GB
+# with headroom (e.g. a 14B coder at higher KV-cache precision), raise max_seq_len
+# accordingly and revisit this note.
 # Disabling the repo map and using diff edits reclaims ~2K tokens per session.
 # Note: phase2.sh overrides edit-format to 'whole' for purely greenfield steps
 # (all planned files are new). This conf value is the fallback for all other steps.

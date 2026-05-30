@@ -131,6 +131,29 @@ artificially — a greenfield step must still deliver substantive content
 takes precedence; isolate new-file creation only when the content is
 meaningful on its own.
 
+**Cap the generated output per step, not just the step file.** The 400-token
+limit in §5 bounds the step *instructions*; it does not bound how much code the
+executor must *generate* — and a large single generation is the most loop-prone
+operation for a local model, including in `whole` format. (The canonical
+failure: a step that creates a ~110-line service class *and* its full test suite
+in one greenfield generation, where the model collapses into a repeated-import
+loop the inference server eventually aborts.) Budget the output: a single
+greenfield step should produce on the order of **one substantial production
+class (~120 lines of new code)** plus only trivial companions (a small record, an
+exception type). When a production class and its test suite would *together*
+exceed that, **author the tests in their own immediately-following step** rather
+than bundling both into one generation. This does not relax the §5 rule that
+every test a step creates is listed in that step's "Files to change" — it means
+the test belongs to the *next* step's file list, not this one. The
+wiring/context-load test §5 requires for a DI-wired component still applies; when
+split for size, it is authored in that following test step, and the
+implementation step's "Inspect first" in that test step must verify the
+component exists (and halt if it does not). This output budget is a damage-limit
+measure: it shrinks each generation so a marginal model has less to spiral on,
+but it does not by itself fix a model that loops on small inputs — that is an
+inference-quality problem (model choice, KV-cache precision, reasoning mode),
+not a planning one.
+
 Conversely, be deliberate about steps that **edit existing files**. Existing
 files are edited with the SEARCH/REPLACE format, never `whole` (the executor
 only selects `whole` when every target is a freshly-created file). A step that
@@ -351,10 +374,13 @@ Additional guardrails for all step files:
 
 ---
 
-## Worked example: a well-formed step file
+## Worked example: a well-formed step pair (impl split from tests)
 
-This is what a `plans/step03.md` looks like in practice. It is roughly
-260 words — well under the 400-token cap.
+A substantial production class and its test suite would exceed the per-step
+output budget (§1) if generated together, so they are authored as two
+consecutive steps. This is the shape to copy — **not** a single step that
+creates the service and its full test class at once. Each file below is well
+under the 400-token cap.
 
 ```
 # Step 03: Add weather fetch service
@@ -376,12 +402,12 @@ keyless public API and returns a typed reading.
 ## Files to change
 - src/main/java/com/example/weather/WeatherService.java (create if missing)
 - src/main/java/com/example/weather/WeatherReading.java (create if missing)
-- src/test/java/com/example/weather/WeatherServiceTest.java (create if missing)
 
 ## Work
 - WeatherReading is an immutable record: temperatureF (double),
   condition (String), humidityPct (int), windMph (double),
-  observedAt (Instant).
+  observedAt (Instant). (Trivial companion — fits the budget alongside
+  the service.)
 - WeatherService exposes WeatherReading fetch() that calls the
   open-meteo current-weather endpoint for Plano (33.0198, -96.6989),
   parses the response, and returns a populated WeatherReading.
@@ -396,6 +422,32 @@ keyless public API and returns a typed reading.
   not return partial data.
 - Network timeout: configure 5-second connect/read timeouts.
 
+## Done condition
+- WeatherService and WeatherReading exist with the behavior above and
+  compile. Behavioral tests are authored in step 04.
+- ./verify.sh exits 0.
+```
+
+```
+# Step 04: Test the weather fetch service
+
+## Goal
+Add behavioral and wiring tests for WeatherService from step 03.
+
+## Inspect first
+- Verify src/main/java/com/example/weather/WeatherService.java exists.
+  If it does not, step 03 did not complete — write the gap to
+  plans/halt-step04.md and stop. Do not create the service here.
+- Check whether a WeatherServiceTest already exists; if yes, extend it
+  rather than creating a duplicate.
+
+## Files to change
+- src/test/java/com/example/weather/WeatherServiceTest.java (create if missing)
+
+## Work
+- Use a focused test slice; mock the HTTP collaborator so no live
+  network call is made.
+
 ## Acceptance tests
 - Mock RestClient to return a known JSON payload; assert all five
   fields parse correctly.
@@ -405,11 +457,11 @@ keyless public API and returns a typed reading.
 - Spring context-load test: load the application context with a mock
   RestClient bean; assert WeatherService is wired and fetch() returns
   a non-null WeatherReading. (Required per the wiring-test guardrail —
-  WeatherService is a Spring-managed component.)
+  WeatherService is a Spring-managed component; the test lands here
+  because impl and tests were split for size.)
 
 ## Done condition
-- WeatherService, WeatherReading, and WeatherServiceTest exist with
-  the behavior above.
+- WeatherServiceTest exists and exercises the behavior above.
 - ./verify.sh exits 0.
 ```
 
