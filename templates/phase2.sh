@@ -894,6 +894,38 @@ if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
     exit 1
 fi
 
+# Model-artifact scrubber: local models emitting whole-file edits sometimes wrap
+# file content in markdown code fences (```), writing the literal fence characters
+# into source files. Strip any line that is only backticks (```) and bare file-path
+# leak lines (e.g. `src/main/java/Foo.java` alone on a line — the next file's header
+# that bled into the current file's content). Neither pattern is valid source syntax,
+# so false positives are impossible in any targeted file.
+_SCRUB_EXTS_RE='\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)$'
+_SCRUBBED=()
+while IFS= read -r _pf; do
+    _ppath=$(_strip_md_path "$_pf")
+    [ -z "$_ppath" ] && continue
+    case "$_ppath" in *" "*) continue ;; esac
+    [[ "$_ppath" =~ $_SCRUB_EXTS_RE ]] || continue
+    [ -f "$_ppath" ] || continue
+    _before=$(wc -l < "$_ppath")
+    _tmp=$(mktemp)
+    grep -Ev \
+        '^[[:space:]]*`+[[:space:]]*$|^[[:space:]]*(src|test|main|lib|app)/[^[:space:]]+\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)[[:space:]]*$' \
+        "$_ppath" > "$_tmp" || true
+    _after=$(wc -l < "$_tmp")
+    if [ "$_before" -ne "$_after" ]; then
+        mv "$_tmp" "$_ppath"
+        _SCRUBBED+=("$_ppath (removed $((_before - _after)) artifact line(s))")
+    else
+        rm -f "$_tmp"
+    fi
+done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+if [ "${#_SCRUBBED[@]}" -gt 0 ]; then
+    logf "==> Scrubbed model artifact line(s) from source files before verify.sh:"
+    for _s in "${_SCRUBBED[@]}"; do logf "    $_s"; done
+fi
+
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
 # internal summarization completed. Prevents lost progress on aider crashes post-verification.
 # verify.sh output is appended to the step log so one file contains both Aider output
