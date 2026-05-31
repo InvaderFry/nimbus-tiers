@@ -30,9 +30,7 @@ run_tests_quiet() {
   done
 
   local mvn_status=0
-  if ! wait "$mvn_pid"; then
-    mvn_status=$?
-  fi
+  wait "$mvn_pid" || mvn_status=$?
 
   if [ "$mvn_status" -eq 0 ]; then
     return 0
