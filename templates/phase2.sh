@@ -595,7 +595,7 @@ if [ "$SKIP_AIDER" = false ]; then
         ${EDIT_FMT_ARGS[@]+"${EDIT_FMT_ARGS[@]}"} \
         --no-auto-test \
         --yes \
-        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
+        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit. /no_think" \
         2>&1 | tee -a "$LOG_FILE"
       _ps=("${PIPESTATUS[@]}")
       _aider_rc="${_ps[0]}"
