@@ -9,11 +9,10 @@ model: openai/Qwen3-14B-exl3-6bpw
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
-# Safe-mode defaults — auto-commit each step, run tests after each edit.
-# For high-risk repos (auth, billing, migrations) override with
-# `auto-commits: false` in a repo-local .aider.conf.yml so you can review
-# diffs before they hit git history.
-auto-commits: true
+# phase2.sh always overrides this with --no-auto-commits and runs verify.sh
+# before committing itself. Keep false here so manual aider sessions also
+# require an explicit commit review rather than auto-committing first drafts.
+auto-commits: false
 auto-test: true
 test-cmd: {{TEST_CMD}}
 

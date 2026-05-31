@@ -316,6 +316,10 @@ Required structure:
   is missing, write the gap description to plans/halt-stepNN.md (where
   NN matches this step's number), then stop and take no further action
   in this step. Do not create a substitute or approximation.
+- If this step writes tests for a class from an earlier step, read that
+  class's source file and note the exact public method names and parameter
+  lists before drafting any test calls. Do not infer method names from step
+  descriptions; only call methods that are visible in the file.
 
 ## Files to change
 - List intended files.
@@ -438,6 +442,10 @@ Add behavioral and wiring tests for WeatherService from step 03.
 - Verify src/main/java/com/example/weather/WeatherService.java exists.
   If it does not, step 03 did not complete — write the gap to
   plans/halt-step04.md and stop. Do not create the service here.
+- **Read WeatherService.java** and note the exact method name and parameter
+  list. Do not assume the method is named anything other than what the file
+  shows. If the file declares `fetch()`, write `service.fetch()` in the
+  tests — not `service.getCurrentWeather("Plano")` or any other invented name.
 - Check whether a WeatherServiceTest already exists; if yes, extend it
   rather than creating a duplicate.
 
@@ -491,6 +499,28 @@ these constraints. Omit sections for languages not used in the project.
   it, and not to fall back to the deprecated `RestTemplate` without noting
   the downgrade explicitly. A missing `RestClient` bean causes a runtime
   startup failure that unit tests (which mock the service) will not catch.
+- **JUnit 5 / Mockito import sources:** These are the most commonly
+  hallucinated test imports — the step file must instruct the executor to
+  verify each against the classpath (i.e., present in `pom.xml` dependencies
+  or the JDK) before using it:
+  - `@ExtendWith` — `org.junit.jupiter.api.extension.ExtendWith` (not any
+    Spring package).
+  - `MockitoExtension` — `org.mockito.junit.jupiter.MockitoExtension` (not
+    `org.mockito.extension.*`).
+  - `@SuppressWarnings` — a JDK annotation; **no import statement**. Any
+    import line for `SuppressWarnings` is a compile error.
+  - `ObjectMapper` — `com.fasterxml.jackson.databind.ObjectMapper`; requires
+    `jackson-databind` in `pom.xml`. Verify the dependency before use.
+  - `Instant` has no `.toInstant()` method. If a field is already typed
+    `Instant`, use it directly.
+  - `@Autowired` — `org.springframework.beans.factory.annotation.Autowired`.
+    Not auto-imported; every test class that uses it needs the explicit import.
+- **Verify method names before writing tests:** Before drafting any test call
+  against a class from a prior step, read that class's source file and confirm
+  the exact method name and parameter list. Do not infer from the step
+  description alone — step descriptions use human-friendly names that may
+  differ from the final code (e.g. a step says "fetch weather" but the method
+  is `fetch()` with no arguments, not `getCurrentWeather("Plano")`).
 - **Spring test rewrites are a degeneration trigger:** fully rewriting an
   existing test class that pulls in `@SpringBootTest` + `@MockBean` (or the
   newer `@MockitoBean`) is import-heavy and version-sensitive — a leading
