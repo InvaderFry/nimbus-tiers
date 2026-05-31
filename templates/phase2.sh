@@ -735,9 +735,19 @@ if [ "$SKIP_AIDER" = false ]; then
     # Note: the pipeline exits 0 on an empty log (each stage succeeds with no output),
     # so _repeat_max will be empty rather than "0" — the :-0 default handles that.
     if [ -f "$LOG_FILE" ]; then
-        _repeat_max=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null \
-            | sort | uniq -c | sort -rn \
-            | awk 'NR==1{print $1; exit}')
+        # Match the live watchdog's semantics: strip trailing whitespace before
+        # the trivial-line filter (Aider pads log lines to terminal width, so a
+        # blank diff line becomes "+" plus spaces and would otherwise pass
+        # length>10) and count the longest run of CONSECUTIVE identical lines
+        # rather than total occurrences. Total-occurrence counting falsely fires
+        # on lines that legitimately recur across a file (blank lines, closing
+        # braces, the same mock-setup line in every test).
+        _repeat_max=$(awk '
+            { s=$0; sub(/[ \t]+$/,"",s)
+              if (length(s) <= 10) { prev=""; run=0; next }
+              if (s==prev) run++; else { prev=s; run=1 }
+              if (run>max) max=run }
+            END { print max+0 }' "$LOG_FILE" 2>/dev/null)
         if [ "${_repeat_max:-0}" -ge "$WATCHDOG_MAX" ]; then
             logf "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded." \
                  "    The local model likely looped generating the same tokens until the inference server aborted." \
