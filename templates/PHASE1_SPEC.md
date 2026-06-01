@@ -125,11 +125,13 @@ import. Combine trivial actions into a meaningful step.
 When creating new files, prefer steps where **all** editable targets are new
 (none exist on disk). Such purely-greenfield steps let the executor use
 `--edit-format whole`, which is more reliable for local models than the
-default SEARCH/REPLACE format. This is not a reason to split a step
-artificially — a greenfield step must still deliver substantive content
-(e.g. a complete class, not an empty stub). The rule against trivial steps
-takes precedence; isolate new-file creation only when the content is
-meaningful on its own.
+default SEARCH/REPLACE format. (The executor also selects `whole` for existing
+targets that are small enough to rewrite in full — see the existing-file rules
+below — so "all targets new" is the cleanest way to get `whole`, not the only
+one.) This is not a reason to split a step artificially — a greenfield step must
+still deliver substantive content (e.g. a complete class, not an empty stub). The
+rule against trivial steps takes precedence; isolate new-file creation only when
+the content is meaningful on its own.
 
 **Cap the generated output per step, not just the step file.** The 400-token
 limit in §5 bounds the step *instructions*; it does not bound how much code the
@@ -154,31 +156,39 @@ but it does not by itself fix a model that loops on small inputs — that is an
 inference-quality problem (model choice, KV-cache precision, reasoning mode),
 not a planning one.
 
-Conversely, be deliberate about steps that **edit existing files**. Existing
-files are edited with the SEARCH/REPLACE format, never `whole` (the executor
-only selects `whole` when every target is a freshly-created file). A step that
-*substantially rewrites* an existing file is therefore greenfield-scale
-generation without the `whole`-format safety net — the canonical local-model
-failure, where an import line or declaration repeats until the inference
-server aborts. Two rules apply, and they are not interchangeable — the first
-prevents the loop, the second only limits its damage:
+Conversely, be deliberate about steps that **edit existing files**. The
+executor picks the edit format by file size: an existing target at or under the
+whole-file threshold (~120 lines, matching the output budget above) is rewritten
+with `--edit-format whole` — the same safety net new files get — while a larger
+existing target is edited with SEARCH/REPLACE, which has no such net. (The
+threshold is `PHASE2_WHOLE_FILE_MAX_LINES` in `phase2.sh`; a single oversized
+target forces the whole step onto diff, since `--edit-format` is per-invocation.)
+A step that *substantially rewrites* a **large** existing file is therefore
+greenfield-scale generation without the `whole`-format safety net — the canonical
+local-model failure, where an import line or declaration repeats until the
+inference server aborts. Plan existing-file edits accordingly:
 
-- **First, shrink the generation: prefer the smallest targeted change** that
-  achieves the goal (remove the obsolete method, add the new one) over a
-  full-file rewrite of an existing file. This is the rule that actually
-  prevents the loop, because the loop happens *inside* the regenerated block —
-  a smaller block has less to spiral on. It trades one failure mode for a
-  smaller one: a targeted SEARCH/REPLACE edit must reproduce a unique,
-  exactly-matching anchor region (whitespace included), which local models can
-  also botch — so instruct the executor to anchor on a small, stable,
-  unambiguous region.
-- **Then, contain the blast radius: do not bundle two substantial
-  existing-file rewrites in one step.** Give each its own step. This only
-  *limits* damage — it does not prevent the loop, because each rewrite can
-  still spiral on its own. Splitting without also shrinking each rewrite just
-  moves the same failure into the next step. If a near-total rewrite of an
-  existing file is genuinely unavoidable, isolate it in its own step rather
-  than bundling it.
+- **For a large target (over the threshold), keep the edit small and give the
+  executor verbatim anchors.** A SEARCH/REPLACE edit must reproduce a unique,
+  exactly-matching anchor region (whitespace included) that local models can
+  botch. In the step file, quote the **exact, verbatim anchor text** the executor
+  should match — copied from the current file, not paraphrased — and keep the
+  replaced region small, stable, and unambiguous. Small verbatim anchors with
+  small replace regions minimize both anchor hallucination and the
+  regenerated-block loop. To quote real anchors, that step's "Inspect first" must
+  actually read the current file.
+- **Prefer the smallest targeted change** that achieves the goal (remove the
+  obsolete method, add the new one) over a full-file rewrite of a large existing
+  file. The loop happens *inside* the regenerated block, so a smaller block has
+  less to spiral on. For a small existing file (under the threshold) a clean whole
+  rewrite is acceptable — it runs under the whole-format net — but `verify.sh` is
+  the only guard against silently dropped content, so that step's acceptance tests
+  must cover the behavior the rewrite has to preserve.
+- **Do not bundle two substantial existing-file rewrites in one step.** Give each
+  its own step. This only *limits* damage — it does not prevent the loop, because
+  each rewrite can still spiral on its own. Splitting without also shrinking each
+  rewrite just moves the same failure into the next step. If a near-total rewrite
+  of a large existing file is genuinely unavoidable, isolate it in its own step.
 
 Do not include implementation code. Do not mark any step DONE.
 

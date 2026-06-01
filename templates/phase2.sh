@@ -503,6 +503,7 @@ if [ "$SKIP_AIDER" = false ]; then
     FILE_ARGS=()
     PARSED_COUNT=0
     _PLACEHOLDERS=()
+    _EXISTING_TARGETS=()
     while IFS= read -r f; do
         path=$(_strip_md_path "$f")
         [ -z "$path" ] && continue
@@ -535,6 +536,7 @@ if [ "$SKIP_AIDER" = false ]; then
         PARSED_COUNT=$((PARSED_COUNT + 1))
         if [ -f "$path" ]; then
             FILE_ARGS+=("--file" "$path")
+            _EXISTING_TARGETS+=("$path")
         elif [ -e "$path" ]; then
             # Exists but is not a regular file (e.g. a directory) — leave it for
             # the planned-file existence guard rather than placeholdering it.
@@ -574,34 +576,66 @@ if [ "$SKIP_AIDER" = false ]; then
         done
     fi
 
-    # Select --edit-format whole for purely greenfield steps (all editable targets
-    # are freshly-created placeholders). diff/SEARCH/REPLACE requires the model to
-    # emit a valid empty SEARCH block for brand-new files — a protocol local models
-    # reliably get wrong (the canonical failure: one import line repeated 175×).
-    # whole format sidesteps this: the model just outputs the complete new file.
-    # Not applied to mixed or existing-only steps: whole forces the model to
-    # reproduce the entire file, risking truncation on large files under the
-    # 10K-token context window.
+    # Select --edit-format whole when every editable target is safe to emit in
+    # full. Whole-file output is far more reliable for local models than
+    # diff/SEARCH/REPLACE: SEARCH/REPLACE requires either a valid empty SEARCH
+    # block for brand-new files or a verbatim anchor into an existing file — both
+    # protocols sub-frontier models botch (the canonical failure: one import line
+    # repeated 175×), whereas whole just asks for the complete file. A target is
+    # whole-safe if it is a freshly-created placeholder (new file) OR an existing
+    # file small enough that reproducing it in full stays within the output/context
+    # budget (<= WHOLE_FILE_MAX_LINES). Aider's --edit-format is per-invocation, not
+    # per-file, so the whole step can only use whole if EVERY target qualifies: a
+    # single oversized existing target forces the step onto diff (reproducing a
+    # large file in full risks truncation and degenerate loops under the 10K-token
+    # context window). The threshold mirrors PHASE1_SPEC's ~120-line per-step output
+    # budget; override via PHASE2_WHOLE_FILE_MAX_LINES for stacks with verbose files.
+    WHOLE_FILE_MAX_LINES=${PHASE2_WHOLE_FILE_MAX_LINES:-120}
     EDIT_FMT_ARGS=()
     _file_target_count=$(( ${#FILE_ARGS[@]} / 2 ))
-    if [ "$_file_target_count" -gt 0 ] && [ "$_file_target_count" -eq "${#_PLACEHOLDERS[@]}" ]; then
+    _existing_target_count=${#_EXISTING_TARGETS[@]}
+    _whole_safe=true
+    _oversized_target=""
+    if [ "$_file_target_count" -eq 0 ]; then
+        # No explicit targets: leave Aider on its default (diff). Forcing whole
+        # with no --file args invites from-scratch hallucination.
+        _whole_safe=false
+    fi
+    for _et in ${_EXISTING_TARGETS[@]+"${_EXISTING_TARGETS[@]}"}; do
+        # wc -l counts newlines, so a final line without a trailing newline is
+        # uncounted — the count is a lower bound, which is fine for a threshold.
+        _lc=$(wc -l < "$_et" 2>/dev/null | tr -cd '0-9')
+        [ -z "$_lc" ] && _lc=0
+        if [ "$_lc" -gt "$WHOLE_FILE_MAX_LINES" ]; then
+            _whole_safe=false
+            _oversized_target="$_et (${_lc} lines)"
+            break
+        fi
+    done
+    if [ "$_whole_safe" = true ]; then
         EDIT_FMT_ARGS=(--edit-format whole)
-        logf "==> All ${_file_target_count} editable target(s) are new placeholders — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
+        if [ "$_existing_target_count" -eq 0 ]; then
+            logf "==> All ${_file_target_count} editable target(s) are new placeholders — using Aider whole-file edit format (more robust for local models than diff/SEARCH/REPLACE on greenfield)."
+        else
+            logf "==> All ${_file_target_count} editable target(s) are new or <= ${WHOLE_FILE_MAX_LINES} lines — using Aider whole-file edit format (more reliable for local models than diff/SEARCH/REPLACE; verify.sh gates any dropped content)."
+        fi
+    elif [ -n "$_oversized_target" ]; then
+        logf "==> Existing target ${_oversized_target} exceeds the ${WHOLE_FILE_MAX_LINES}-line whole-file threshold — using diff edit format for this step. Keep the edit small and give the model verbatim anchor text in the step file (see PHASE1_SPEC §1)."
     fi
 
-    # Advisory: warn when a step targets more than one existing (non-placeholder)
-    # file. Existing files are edited with diff/SEARCH/REPLACE (never whole), and a
-    # substantial existing-file rewrite is the canonical setup for a degenerate
-    # generation loop — the model spirals inside the regenerated block. phase2.sh
-    # cannot tell a small targeted edit from a full rewrite, so this is a heuristic
-    # nudge, not a gate (it may over-fire on two small edits). Non-fatal; mirrors
-    # the token-cap warning. The planning rule is in PHASE1_SPEC §1 (PLAN.md, "edit
-    # existing files"): shrink each edit to a targeted change first, and only then
-    # isolate any unavoidable full rewrite into its own step — splitting alone does
-    # not prevent the loop.
-    _existing_target_count=$(( _file_target_count - ${#_PLACEHOLDERS[@]} ))
-    if [ "$_existing_target_count" -gt 1 ]; then
-        logf_err "==> WARN: step targets ${_existing_target_count} existing files. Local models can loop regenerating large existing-file blocks. Prefer making each a small targeted edit rather than a full rewrite; isolate any unavoidable full rewrite into its own step (see PHASE1_SPEC §1)."
+    # Advisory: warn when a step targets more than one existing file that will be
+    # edited via diff (i.e. the step fell back to diff because something was
+    # oversized). A substantial existing-file rewrite under diff is the canonical
+    # setup for a degenerate generation loop — the model spirals inside the
+    # regenerated block. Suppressed when the step uses whole, since small existing
+    # files emitted in full are not the looping risk. phase2.sh cannot tell a small
+    # targeted edit from a full rewrite, so this is a heuristic nudge, not a gate.
+    # Non-fatal; mirrors the token-cap warning. The planning rule is in PHASE1_SPEC
+    # §1 (PLAN.md, "edit existing files"): shrink each edit to a targeted change
+    # first, give verbatim anchors, and isolate any unavoidable full rewrite into
+    # its own step — splitting alone does not prevent the loop.
+    if [ "${#EDIT_FMT_ARGS[@]}" -eq 0 ] && [ "$_existing_target_count" -gt 1 ]; then
+        logf_err "==> WARN: step targets ${_existing_target_count} existing files and is using diff edit format. Local models can loop regenerating large existing-file blocks. Prefer making each a small targeted edit with verbatim anchors rather than a full rewrite; isolate any unavoidable full rewrite into its own step (see PHASE1_SPEC §1)."
     fi
 
     # Live degenerate-output watchdog config. A local model can loop emitting the
