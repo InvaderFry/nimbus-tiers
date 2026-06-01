@@ -595,7 +595,7 @@ if [ "$SKIP_AIDER" = false ]; then
         ${EDIT_FMT_ARGS[@]+"${EDIT_FMT_ARGS[@]}"} \
         --no-auto-test \
         --yes \
-        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit. /no_think" \
+        -m "Implement only the step in $STEP_FILE. CONTEXT.md has invariants and do-not-change areas. Do not run tests; the shell verifies after you exit." \
         2>&1 | tee -a "$LOG_FILE"
       _ps=("${PIPESTATUS[@]}")
       _aider_rc="${_ps[0]}"
@@ -896,10 +896,14 @@ fi
 
 # Model-artifact scrubber: local models emitting whole-file edits sometimes wrap
 # file content in markdown code fences (```), writing the literal fence characters
-# into source files. Strip any line that is only backticks (```) and bare file-path
-# leak lines (e.g. `src/main/java/Foo.java` alone on a line — the next file's header
-# that bled into the current file's content). Neither pattern is valid source syntax,
-# so false positives are impossible in any targeted file.
+# into source files. Strip any line that is a markdown code fence (3+ backticks
+# only) and bare file-path leak lines (e.g. `src/main/java/Foo.java` alone on a
+# line — the next file's header that bled into the current file's content).
+# NOTE: the fence pattern requires 3+ backticks on purpose. A single backtick on
+# its own line is valid source — a Go raw-string delimiter or a JS/TS multi-line
+# template-literal delimiter — and both extensions are in the scrub list, so
+# matching `+ (one-or-more) would silently corrupt valid code. Markdown fences are
+# always 3+ backticks, so `{3,} catches the artifact without that false positive.
 _SCRUB_EXTS_RE='\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)$'
 _SCRUBBED=()
 while IFS= read -r _pf; do
@@ -911,7 +915,7 @@ while IFS= read -r _pf; do
     _before=$(wc -l < "$_ppath")
     _tmp=$(mktemp)
     grep -Ev \
-        '^[[:space:]]*`+[[:space:]]*$|^[[:space:]]*(src|test|main|lib|app)/[^[:space:]]+\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)[[:space:]]*$' \
+        '^[[:space:]]*`{3,}[[:space:]]*$|^[[:space:]]*(src|test|main|lib|app)/[^[:space:]]+\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)[[:space:]]*$' \
         "$_ppath" > "$_tmp" || true
     _after=$(wc -l < "$_tmp")
     if [ "$_before" -ne "$_after" ]; then
