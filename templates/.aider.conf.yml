@@ -1,11 +1,14 @@
 # Aider configuration — Path C (Full Hybrid)
-# Default executor: local Qwen3-14B (exl3 6bpw) served by TabbyAPI on localhost:5000. 
+# Default executor: local Qwen2.5-Coder-14B (exl3 6bpw) served by TabbyAPI on localhost:5000.
+# NOTE: under TabbyAPI single-model mode the server ignores this requested name and
+# serves whatever model is currently loaded — so this string is a label for clarity,
+# not a selector. Keep it in sync with the model you actually load.
 # Mid-session swaps Not currently used today:
 #   /model groq/llama-3.3-70b-versatile     # Tier 2 fallback
 #   /model anthropic/claude-opus-4-7        # Tier 3 escalation
 #   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
 
-model: openai/Qwen3-14B-exl3-6bpw
+model: openai/Qwen2.5-Coder-14B-exl3-6bpw
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
@@ -17,14 +20,15 @@ auto-commits: true
 auto-test: true
 test-cmd: {{TEST_CMD}}
 
-# Token budget. NOTE: the current Qwen3-32B/TabbyAPI setup is capped at a ~10K
-# max_seq_len (config.yml) only because a 32B model barely fits 16GB — that is a
+# Token budget. NOTE: the legacy Qwen3-32B/TabbyAPI setup was capped at a ~10K
+# max_seq_len (config.yml) only because a 32B model barely fits 16GB — that was a
 # VRAM-forced limit, not the model's native context. max_seq_len bounds INPUT;
 # the OUTPUT budget per completion is a separate server-side cap (nimbus.yml
 # max_tokens). A run can fail on either axis, and they have different fixes — see
-# the failure classification in phase2.sh. If you swap to a model that fits 16GB
-# with headroom (e.g. a 14B coder at higher KV-cache precision), raise max_seq_len
-# accordingly and revisit this note.
+# the failure classification in phase2.sh. The current default executor is
+# Qwen2.5-Coder-14B (~11GB), which fits 16GB with headroom — so raise max_seq_len
+# above 10K and use an 8-bit/FP16 KV cache (not 2/3-bit) on the server. That headroom
+# is the real fix for the degenerate-repetition loops most of phase2.sh guards against.
 # Disabling the repo map and using diff edits reclaims ~2K tokens per session.
 # Note: phase2.sh overrides edit-format to 'whole' for purely greenfield steps
 # (all planned files are new). This conf value is the fallback for all other steps.
