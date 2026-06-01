@@ -2,10 +2,15 @@
 PLAN.md
 TESTS.md
 
-# Aider working files
-.aider.tags.cache.v3/
-.aider.chat.history.md
-.aider.input.history
+# Aider working files.
+# Use the broad `.aider*` glob, not the individual files: on startup Aider adds
+# `.aider*` to .gitignore if it is not already present ("Added .aider* to
+# .gitignore"). That auto-edit modifies a tracked file, which makes the working
+# tree dirty and silently defeats phase2.sh's "Aider made no changes" guard —
+# a total executor failure (zero real edits) then sails through to verify.sh and
+# can be committed as DONE. Listing `.aider*` here removes Aider's reason to touch
+# the file at all.
+.aider*
 
 # Phase 2 aider run logs — transient, not for version control
 plans/*.log
