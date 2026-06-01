@@ -8,7 +8,8 @@
 #   /model anthropic/claude-opus-4-7        # Tier 3 escalation
 #   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
 
-model: openai/Qwen2.5-Coder-14B-exl3-6bpw
+model: openai/Qwen2.5-Coder-14B-Instruct-exl2
+#model: openai/huihui-Qwen2.5-Coder-32B-abliterated-EXL3-3.0bpw_H6
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
@@ -16,8 +17,8 @@ openai-api-key: notneeded
 # For high-risk repos (auth, billing, migrations) override with
 # `auto-commits: false` in a repo-local .aider.conf.yml so you can review
 # diffs before they hit git history.
-auto-commits: true
-auto-test: true
+auto-commits: false
+auto-test: false
 test-cmd: {{TEST_CMD}}
 
 # Token budget. NOTE: the legacy Qwen3-32B/TabbyAPI setup was capped at a ~10K
