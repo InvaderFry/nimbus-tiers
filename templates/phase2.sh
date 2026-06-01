@@ -340,13 +340,52 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
             fi
             # If pointing at a local server, verify it is actually reachable before
             # handing control to aider (which would otherwise hang on retries).
+            # Capture the /models body (not -o /dev/null) so we can also reconcile
+            # the SERVED model against the configured one below.
             if [ -n "$_PREFLIGHT_BASE_URL" ] && command -v curl >/dev/null 2>&1; then
                 _AUTH_HEADER=()
                 [ -n "$_PREFLIGHT_API_KEY" ] && _AUTH_HEADER=(-H "Authorization: Bearer ${_PREFLIGHT_API_KEY}")
-                if ! curl -sf --max-time 5 "${_PREFLIGHT_BASE_URL%/}/models" \
-                     "${_AUTH_HEADER[@]}" -o /dev/null 2>/dev/null; then
+                # errexit/pipefail off for the reachability probe and the no-jq
+                # parse below: a failed curl assignment or a no-match grep in the
+                # pipeline would otherwise abort the whole script.
+                set +e
+                _MODELS_BODY=$(curl -sf --max-time 5 "${_PREFLIGHT_BASE_URL%/}/models" \
+                     "${_AUTH_HEADER[@]}" 2>/dev/null)
+                _CURL_RC=$?
+                set -e
+                if [ "$_CURL_RC" -ne 0 ]; then
                     echo "==> ERROR: local model server at '${_PREFLIGHT_BASE_URL}' is not reachable. Aborting."
                     exit 1
+                fi
+                # Reconcile configured label vs served model. Under TabbyAPI's
+                # single-model mode the `model:` in .aider.conf.yml is a cosmetic
+                # label, NOT a selector — the server serves whatever weights are
+                # loaded. So aider's banner ("Model: <label>") can name a model that
+                # is not the one actually running. That silent drift is exactly how a
+                # quant/serving problem gets misattributed to the model choice.
+                # Strip the provider prefix from the configured name, then check the
+                # served /models payload for it. Report BOTH values and only warn
+                # (non-fatal, no jq) — server id formatting (folder name vs label)
+                # varies, so an equality gate would false-positive constantly.
+                _CONFIGURED_BARE="${_PREFLIGHT_MODEL#openai/}"
+                set +e
+                _SERVED_IDS=$(printf '%s' "$_MODELS_BODY" \
+                    | grep -oE '"id"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                    | sed -E 's/.*"id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+                    | paste -sd, -)
+                printf '%s' "$_MODELS_BODY" | grep -qF "$_CONFIGURED_BARE"
+                _SERVED_MATCH=$?
+                set -e
+                if [ -n "$_SERVED_IDS" ] && [ "$_SERVED_MATCH" -ne 0 ]; then
+                    echo "==> WARN: configured model and served model differ."
+                    echo "    configured (.aider.conf.yml / AIDER_MODEL): ${_PREFLIGHT_MODEL}"
+                    echo "    served by ${_PREFLIGHT_BASE_URL%/} (/models): ${_SERVED_IDS}"
+                    echo "    Under TabbyAPI the 'model:' field is a label, not a selector — the"
+                    echo "    server runs whatever is loaded. Aider's banner will show the label,"
+                    echo "    so it can misname the model that actually runs. If output quality is"
+                    echo "    poor (e.g. corrupted/verbatim-copy failures), check the inference"
+                    echo "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit"
+                    echo "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
                 fi
             fi
             ;;
@@ -378,6 +417,17 @@ _BUILD_EXCLUDES=(
     ':!node_modules' ':!dist' ':!out'
 )
 _COMMIT_EXCLUDES=("${_BUILD_EXCLUDES[@]}" ':!plans/*.log')
+
+# Excludes for the "Aider made no changes" guard ONLY. A change to .gitignore
+# alone is housekeeping, not progress on the step — Aider rewrites .gitignore on
+# startup (adding its own working-file globs), and any other tool may touch it
+# too. If that is the *only* dirty path, the model did no real work and the step
+# must NOT be allowed to reach verify.sh and be recorded DONE. The template
+# .gitignore already pre-lists `.aider*` so Aider has no reason to edit it, but
+# this guard is the backstop for any housekeeping-only change. Note: .gitignore
+# is deliberately NOT in _COMMIT_EXCLUDES, so a step that legitimately edits it
+# alongside real source changes still commits the .gitignore edit.
+_NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
 
 # Refuse to start with a dirty working tree unless a WIP sentinel signals an
 # interrupted prior run for this step. Without this guard the bottom-of-script
@@ -805,9 +855,11 @@ if [ "$SKIP_AIDER" = false ]; then
     # Use `git status --porcelain` (not `git diff`) so newly created *untracked*
     # files count as changes — a greenfield step that only creates new files
     # (e.g. populated placeholders Aider did not git-add) would otherwise be seen
-    # as "no changes" and wrongly rejected. Excludes match the commit step so the
-    # guard agrees with what would actually be committed.
-    if [ -z "$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null)" ]; then
+    # as "no changes" and wrongly rejected. Uses _NOCHANGE_EXCLUDES (= commit
+    # excludes plus .gitignore) so a housekeeping-only .gitignore edit — e.g.
+    # Aider's startup rewrite — does NOT masquerade as real work and let a
+    # zero-edit run reach verify.sh and be recorded DONE.
+    if [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
         logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
         exit 1
     fi
