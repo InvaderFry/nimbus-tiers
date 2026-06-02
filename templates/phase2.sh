@@ -469,6 +469,23 @@ if [ -f "$WIP_FILE" ]; then
     fi
 fi
 
+# Extended regex matching a malformed JVM source path. Java/Kotlin/Scala/Groovy
+# package names map to directories by replacing each `.` with `/`, so a
+# legitimate source *directory* never contains a `.` or `()`. Two forms of the
+# canonical local-model layout bug are caught:
+#   1. A dotted directory component under a source root, e.g.
+#      `src/main/java/com.example/Foo.java` — the first alternative matches a
+#      `.`-bearing component that is FOLLOWED BY A SLASH (so it is a directory).
+#      The final filename (`Foo.java`, no trailing slash) is therefore never
+#      flagged, and a legitimately dotted filename like `Foo.Bar.java` is safe.
+#   2. A parenthesised source root, e.g. `src/main/java(com.example.app)/...` —
+#      the second alternative matches the lang dir immediately followed by `(`.
+# Match against RAW paths (do not append a trailing slash, which would make the
+# final filename look like a directory and false-positive every valid path).
+# Shared by the pre-Aider planned-path check and the post-Aider working-tree
+# guard so both use one definition.
+_JVM_DOTTED_DIR_RE='(src/(main|test)/(java|kotlin|scala|groovy)/([^/]*/)*[^/]*\.[^/]*/)|(src/(main|test)/(java|kotlin|scala|groovy)\()'
+
 # Parse a path entry from a "## Files to change" list item in a step file.
 # Strips the leading "- " marker, any remaining leading whitespace (handles the
 # double-space typo '- ⎵⎵src/...'), a trailing "(annotation)" suffix, and one
@@ -502,6 +519,7 @@ if [ "$SKIP_AIDER" = false ]; then
     # complicate the --file plumbing and real paths here never contain spaces.
     FILE_ARGS=()
     PARSED_COUNT=0
+    _MALFORMED_PLANNED=0
     _PLACEHOLDERS=()
     _EXISTING_TARGETS=()
     while IFS= read -r f; do
@@ -533,6 +551,22 @@ if [ "$SKIP_AIDER" = false ]; then
                 continue
                 ;;
         esac
+        # Reject a planned path whose directory component under a JVM source root
+        # contains a `.` (e.g. src/main/java/com.example/Foo.java) — a
+        # package-name-as-directory bug. Skipping it here is important: the
+        # placeholder step below runs `mkdir -p "$(dirname "$path")"`, which would
+        # otherwise CREATE the malformed directory from a bad plan. Left out of
+        # FILE_ARGS, the path is reported by the existence guard and the step is
+        # rejected cleanly. See PHASE1_SPEC §Java (package-to-directory mapping).
+        # Count the rejection separately from PARSED_COUNT so the post-loop
+        # messaging can say "malformed" rather than the misleading "no entries
+        # parsed" when a malformed path is the only thing listed.
+        if printf '%s' "$path" | grep -qE "$_JVM_DOTTED_DIR_RE"; then
+            logf_err "==> WARN: skipping planned path with a dotted/parenthesised directory under a JVM source root (package-name-as-directory bug?): $path" \
+                     "    A Java/Kotlin package maps to directories by replacing '.' with '/': com.example.app -> com/example/app."
+            _MALFORMED_PLANNED=$((_MALFORMED_PLANNED + 1))
+            continue
+        fi
         PARSED_COUNT=$((PARSED_COUNT + 1))
         if [ -f "$path" ]; then
             FILE_ARGS+=("--file" "$path")
@@ -562,7 +596,12 @@ if [ "$SKIP_AIDER" = false ]; then
         fi
     done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
 
-    if [ "$PARSED_COUNT" -eq 0 ]; then
+    if [ "$PARSED_COUNT" -eq 0 ] && [ "$_MALFORMED_PLANNED" -gt 0 ]; then
+        logf_err "==> WARN: every path in '## Files to change' in $STEP_FILE was rejected as a" \
+                 "    malformed JVM source path (${_MALFORMED_PLANNED} path(s) — see per-path WARNs above)." \
+                 "    Fix the package→directory layout in the step file (com.example.app -> com/example/app)." \
+                 "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
+    elif [ "$PARSED_COUNT" -eq 0 ]; then
         logf_err "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." \
                  "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
@@ -943,12 +982,39 @@ fi
 # ordering, a garbage-path artifact would cause the existence guard to fire
 # and exit 1 before git clean runs, leaving the garbage file in the working
 # tree and causing the next invocation's dirty-tree guard to block.
-_MP=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
-        | grep -E '\*\*' || true)
-if [ -n "$_MP" ]; then
-    logf "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded." \
-         "    Pattern '**' found in the following working-tree paths:"
-    while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP"
+# Two patterns are caught: the literal '**' artifact, and a dotted directory
+# component under a JVM source root (com.example as a directory instead of
+# com/example) — the package-name-as-directory bug a local executor produces
+# when a step leaves the layout implicit. See PHASE1_SPEC §Java.
+#
+# `--untracked-files=all` is REQUIRED: by default `git status --porcelain`
+# collapses an entirely-untracked subtree to its top component (a brand-new
+# `src/main/java/com.example/Foo.java` in a greenfield step where nothing under
+# src/ is tracked shows only as `?? src/`), so the dotted segment never reaches
+# grep and the guard silently misses it. `-uall` expands to individual files.
+#
+# Status is captured ONCE (one porcelain walk, not one per pattern) and reduced
+# to the effective on-disk path per entry before grepping: the 2-char status
+# code + space prefix is stripped, and for a rename/copy entry (`OLD -> NEW`)
+# only NEW — the path that now exists — is kept. Without this the guard would
+# fire on the OLD half of a *corrective* rename (e.g. fixing com.example/ ->
+# com/example/) and discard the very fix it should reward.
+_ST=$(git status --porcelain --untracked-files=all -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+_EFF=$(printf '%s\n' "$_ST" | sed -e 's/^...//' -e 's/^.* -> //')
+_MP=$(printf '%s\n' "$_EFF" | grep -E '\*\*' || true)
+_MP_PKG=$(printf '%s\n' "$_EFF" | grep -E "$_JVM_DOTTED_DIR_RE" || true)
+if [ -n "$_MP" ] || [ -n "$_MP_PKG" ]; then
+    logf "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded."
+    if [ -n "$_MP" ]; then
+        logf "    Pattern '**' found in the following working-tree paths:"
+        while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP"
+    fi
+    if [ -n "$_MP_PKG" ]; then
+        logf "    A directory segment under a JVM source root (src/main|test/java, ...) contains a '.'," \
+             "    which is almost certainly a package-name-as-directory bug: a Java/Kotlin package maps to" \
+             "    directories by replacing '.' with '/' (com.example.app -> com/example/app). Affected paths:"
+        while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP_PKG"
+    fi
     logf "    Discarding malformed files and resetting working tree."
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true

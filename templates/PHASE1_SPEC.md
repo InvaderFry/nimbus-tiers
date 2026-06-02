@@ -101,6 +101,14 @@ Include:
 - Build and test commands.
 - Invariants every step must respect (coding conventions, file naming, env
   vars, security constraints, etc.).
+- Naming & path conventions: the exact base package and its directory path
+  (e.g. package `com.example.app0501` → `src/main/java/com/example/app0501/`),
+  the precise module/artifact name with its **exact spelling and digit count**
+  (e.g. `app0501`, four digits — not `app51` or `app051`), and any other literal
+  identifiers steps must reproduce verbatim. Because the executor reads
+  `CONTEXT.md` on every step, this is the one place that pins these concrete
+  values for every generation — state them here so a step file cannot leave the
+  layout or a name to the model's guesswork.
 
 Do not include the step-by-step plan or test strategy. Keep `CONTEXT.md`
 under 350 words. It is a stable reference, not a changelog. It must not be
@@ -515,6 +523,24 @@ these constraints. Omit sections for languages not used in the project.
 
 ### Java
 
+- **Package-to-directory mapping:** a Java package name maps to a directory
+  path by replacing every `.` with `/`. Package `com.example.app0501` lives at
+  `src/main/java/com/example/app0501/` (and its tests at
+  `src/test/java/com/example/app0501/`). Directory names **never** contain a `.`
+  or `()`: `src/main/java/com.example/app0501/` (dotted segment) and
+  `src/main/java(com.example.app0501)/` (parenthesised segment) are both
+  malformed and will be rejected. A local model improvises this layout when a
+  step leaves it implicit, so every step must remove the guesswork:
+    - In **"Files to change"**, list the full slash-separated path of each file
+      (`src/main/java/com/example/app0501/Foo.java`) — never a dotted package as
+      a path segment, and never a bare class name.
+    - In **"Inspect first"** or **"Work"**, restate the package→path mapping for
+      this step inline (e.g. "package `com.example.app0501` → directory
+      `src/main/java/com/example/app0501/`") so the executor reproduces it rather
+      than inventing it.
+  This is backstopped deterministically: `phase2.sh` rejects any directory
+  component containing a `.` under a JVM source root (`src/main|test/java`, etc.)
+  — see §4 — but planning the paths explicitly is what avoids the wasted run.
 - **Map.of() arity limit:** `Map.of(k, v, …)` has fixed-arity overloads
   that accept at most 10 key-value pairs. For maps with more than 10 entries,
   instruct the executor to use `Map.ofEntries(Map.entry(k1, v1), …)` instead.
