@@ -268,6 +268,24 @@ A Bash script that:
   Use whichever sentinel is appropriate for this project. If the expected
   sentinel does not exist, print a message that names it and exit 0.
 - If initialized, runs the automated build/lint/test gate.
+- The gate must **compile the whole application** (not just the changed file)
+  and, for framework apps, exercise at least one full-context startup test
+  (see the wiring rule in §5) so a missing or mismatched bean / wrong
+  dependency fails here rather than only at real `run` time. A test slice
+  alone does not exercise startup.
+- The gate must **propagate the underlying toolchain's exit status**. When the
+  build/test command is wrapped in a function or piped through a log filter,
+  capture and return its real status (`set -o pipefail`; check
+  `${PIPESTATUS[0]}`); never let a non-zero build look like success. This is
+  the difference between "tests passed" and "the gate silently swallowed a
+  compile failure."
+- **Static defect guards (cheap defense-in-depth):** when a step's correctness
+  depends on a constraint a slice test can miss, add a fast `grep`-based check
+  that fails the gate on the known-wrong pattern. Example for a blocking
+  `spring-boot-starter-web` project: fail if `reactive`/`webflux`/`WebClient`
+  imports appear under `src/main` (the project is not reactive — see the Java
+  HTTP-client guardrail). Keep these guards specific and few; they backstop
+  the wiring test, they do not replace it.
 - Does not perform manual checks.
 - Does not perform live-network checks unless explicitly required.
 - Keeps logs concise and focused on failures.
@@ -355,7 +373,19 @@ Required structure:
   controller, route, or CLI entry point, include at least one wiring or
   context-load test that verifies the framework successfully instantiates it.
   A unit test that mocks the component directly does not substitute for this:
-  unit tests can pass while the application fails to start.
+  unit tests can pass while the application fails to start. **Nor does a
+  framework test *slice* substitute** (Spring's `@WebMvcTest`,
+  `@RestClientTest`, `@DataJpaTest`, `@JsonTest`, `@WebFluxTest`, `@JdbcTest`,
+  or any equivalent that loads a restricted context). A slice auto-configures
+  a narrow, partly-mocked context and does **not** instantiate the full set of
+  real beans — so it will not catch a missing or mismatched collaborator bean
+  (e.g. a service wired for one HTTP client when only the other client's
+  dependency is on the classpath). The wiring test that satisfies this rule
+  must load the **full application context** (`@SpringBootTest` or the
+  language/framework equivalent), with external collaborators mocked to keep
+  it deterministic and offline. This is the test that turns an executor's
+  wrong-dependency deviation into a failed `verify.sh` instead of a green
+  build that only blows up at real startup.
 
 ## Done condition
 - State the clear completion condition.
@@ -501,6 +531,32 @@ these constraints. Omit sections for languages not used in the project.
   it, and not to fall back to the deprecated `RestTemplate` without noting
   the downgrade explicitly. A missing `RestClient` bean causes a runtime
   startup failure that unit tests (which mock the service) will not catch.
+- **HTTP-client / dependency consistency:** the HTTP client a step uses must
+  match the starter actually on the classpath, and a step must use exactly
+  one client API consistently. `RestClient` and `RestTemplate` are the
+  blocking/servlet clients (in `spring-web`, present via
+  `spring-boot-starter-web`); their test tooling is
+  `MockRestServiceServer`/`@RestClientTest`. `WebClient` and
+  `WebClientResponseException` are the reactive client (in `spring-webflux`,
+  present via `spring-boot-starter-webflux`); its slice is `@WebFluxTest`. (The
+  slice annotations and `MockRestServiceServer` actually ship in
+  `spring-boot-starter-test`/`spring-test`, not the runtime starters — but each
+  targets one stack, so don't pair them across stacks.) A local
+  model frequently hallucinates a *mix* — e.g. a `WebClient.Builder` field
+  configured with `RestClient.Builder`/`RestTemplate`-only methods like
+  `requestFactory(...)`, or a `WebClient` service paired with an
+  `@RestClientTest` + `MockRestServiceServer` test. Both are wrong: `WebClient`
+  uses `ClientHttpConnector`, not `ClientHttpRequestFactory`, and a servlet
+  slice does not configure a reactive client. For any step that performs an
+  outbound HTTP call, the step file must (a) name the **single** client API to
+  use, (b) tie it to the starter the project actually declares — instructing
+  the executor to read `pom.xml`/`build.gradle` first and use the client that
+  matches, not to add `spring-webflux` unless the project is reactive — and
+  (c) pair it with the matching test slice only as a *unit* test, never in
+  place of the full-context wiring test required in §5. When the project is a
+  blocking `spring-boot-starter-web` app (the default scaffold), the client is
+  `RestClient`; `WebClient`/`webflux`/`reactive` imports in `src/main` are a
+  defect, and `verify.sh` should reject them statically (see §4).
 - **Spring test rewrites are a degeneration trigger:** fully rewriting an
   existing test class that pulls in `@SpringBootTest` + `@MockBean` (or the
   newer `@MockitoBean`) is import-heavy and version-sensitive — a leading

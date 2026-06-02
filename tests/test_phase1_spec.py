@@ -18,6 +18,20 @@ def _extract_worked_example_blocks(text: str) -> list[str]:
     return blocks
 
 
+def _section(text: str, start_heading: str, end_heading: str | None) -> str:
+    """Return the spec text from start_heading up to end_heading (exclusive).
+
+    Scopes a token assertion to the section that is supposed to contain it, so a
+    test cannot pass on a token that merely survives in some other section. Both
+    headings must be present and ordered; end_heading=None runs to end of file.
+    """
+    start = text.index(start_heading)
+    if end_heading is None:
+        return text[start:]
+    end = text.index(end_heading, start + len(start_heading))
+    return text[start:end]
+
+
 def test_worked_example_under_word_cap() -> None:
     """Each step in the worked example must respect the 300-word target it teaches.
 
@@ -41,3 +55,59 @@ def test_worked_example_uses_required_step_structure() -> None:
     for required in ("## Goal", "## Inspect first", "## Files to change",
                      "## Work", "## Acceptance tests", "## Done condition"):
         assert required in combined, f"Worked example missing section: {required}"
+
+
+def test_wiring_rule_rejects_test_slices() -> None:
+    """The §5 wiring rule must say a framework test slice does not satisfy it.
+
+    A slice (@RestClientTest, @WebMvcTest, …) loads a restricted, partly-mocked
+    context and will not instantiate the real collaborator beans — so it cannot
+    catch a missing/mismatched bean. The rule must direct planners to a
+    full-context test (@SpringBootTest) instead. Regressing this reopens the
+    exact gap that let a WebClient-vs-RestClient mismatch ship green.
+
+    Scoped to §5 so the assertion cannot pass on tokens that merely survive in
+    the Java guardrails or the pre-existing degeneration-trigger section.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 5. plans/stepNN.md",
+        "## Worked example:",
+    )
+    for token in ("slice", "@RestClientTest", "@SpringBootTest", "full application context"):
+        assert token in section, f"§5 wiring rule missing slice-vs-context-load token: {token}"
+
+
+def test_java_http_client_consistency_guardrail_present() -> None:
+    """The Java guardrails must cover HTTP-client / dependency consistency.
+
+    The canonical local-model failure mixes a reactive client with the servlet
+    starter (WebClient configured via RestClient-only requestFactory(...), or a
+    WebClient service tested with @RestClientTest). The spec must name this so a
+    planner ties the client to the declared starter.
+
+    Scoped to the Java guardrails section; tokens are uniquely meaningful there
+    (no substring-of-another-token freebies like starter-web ⊂ starter-webflux).
+    """
+    section = _section(SPEC_PATH.read_text(encoding="utf-8"), "### Java", None)
+    for token in ("HTTP-client", "WebClient", "requestFactory",
+                  "ClientHttpConnector", "spring-webflux"):
+        assert token in section, f"Java HTTP-client guardrail missing token: {token}"
+
+
+def test_verify_sh_requires_exit_propagation_and_static_guards() -> None:
+    """§4 must require exit-status propagation and allow cheap static defect guards.
+
+    The lesson from the field failure: a gate that swallows a non-zero build
+    status reports "tests passed" on code that does not compile. The spec must
+    require propagating the real status and permit a fast grep-based backstop.
+
+    Scoped to §4 so the tokens prove the rule lives in the verify.sh section.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 4. verify.sh",
+        "### 5. plans/stepNN.md",
+    )
+    for token in ("PIPESTATUS", "exit status", "Static defect guards"):
+        assert token in section, f"§4 verify.sh section missing gate-hardening token: {token}"
