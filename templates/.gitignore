@@ -10,7 +10,15 @@ TESTS.md
 # a total executor failure (zero real edits) then sails through to verify.sh and
 # can be committed as DONE. Listing `.aider*` here removes Aider's reason to touch
 # the file at all.
+# The negations below re-include the two committed config files: `.aider*` also
+# matches `.aider.conf.yml` and `.aiderignore`, which the generator writes into
+# every project and stages with `git add .` — without these `!` lines the glob
+# would silently drop both from the scaffold commit, shipping projects with no
+# tracked Aider config. The literal `.aider*` line is still present, so Aider has
+# no reason to rewrite .gitignore; only the transient caches/history stay ignored.
 .aider*
+!.aider.conf.yml
+!.aiderignore
 
 # Phase 2 aider run logs — transient, not for version control
 plans/*.log

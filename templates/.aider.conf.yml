@@ -31,8 +31,10 @@ test-cmd: {{TEST_CMD}}
 # above 10K and use an 8-bit/FP16 KV cache (not 2/3-bit) on the server. That headroom
 # is the real fix for the degenerate-repetition loops most of phase2.sh guards against.
 # Disabling the repo map and using diff edits reclaims ~2K tokens per session.
-# Note: phase2.sh overrides edit-format to 'whole' for purely greenfield steps
-# (all planned files are new). This conf value is the fallback for all other steps.
+# Note: phase2.sh overrides edit-format to 'whole' when every planned target is
+# whole-safe — i.e. brand-new files, or existing files at or under the whole-file
+# threshold (~120 lines, PHASE2_WHOLE_FILE_MAX_LINES). This 'diff' value is the
+# fallback used when a step has an oversized existing target (or no explicit targets).
 map-tokens: 0
 edit-format: diff
 
