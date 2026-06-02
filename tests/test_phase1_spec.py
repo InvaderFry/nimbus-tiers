@@ -41,3 +41,43 @@ def test_worked_example_uses_required_step_structure() -> None:
     for required in ("## Goal", "## Inspect first", "## Files to change",
                      "## Work", "## Acceptance tests", "## Done condition"):
         assert required in combined, f"Worked example missing section: {required}"
+
+
+def test_wiring_rule_rejects_test_slices() -> None:
+    """The §5 wiring rule must say a framework test slice does not satisfy it.
+
+    A slice (@RestClientTest, @WebMvcTest, …) loads a restricted, partly-mocked
+    context and will not instantiate the real collaborator beans — so it cannot
+    catch a missing/mismatched bean. The rule must direct planners to a
+    full-context test (@SpringBootTest) instead. Regressing this reopens the
+    exact gap that let a WebClient-vs-RestClient mismatch ship green.
+    """
+    text = SPEC_PATH.read_text(encoding="utf-8")
+    for token in ("slice", "@RestClientTest", "@SpringBootTest", "full application context"):
+        assert token in text, f"Wiring rule missing slice-vs-context-load token: {token}"
+
+
+def test_java_http_client_consistency_guardrail_present() -> None:
+    """The Java guardrails must cover HTTP-client / dependency consistency.
+
+    The canonical local-model failure mixes a reactive client with the servlet
+    starter (WebClient configured via RestClient-only requestFactory(...), or a
+    WebClient service tested with @RestClientTest). The spec must name this so a
+    planner ties the client to the declared starter.
+    """
+    text = SPEC_PATH.read_text(encoding="utf-8")
+    for token in ("HTTP-client", "WebClient", "webflux", "requestFactory",
+                  "spring-boot-starter-web"):
+        assert token in text, f"HTTP-client consistency guardrail missing token: {token}"
+
+
+def test_verify_sh_requires_exit_propagation_and_static_guards() -> None:
+    """§4 must require exit-status propagation and allow cheap static defect guards.
+
+    The lesson from the field failure: a gate that swallows a non-zero build
+    status reports "tests passed" on code that does not compile. The spec must
+    require propagating the real status and permit a fast grep-based backstop.
+    """
+    text = SPEC_PATH.read_text(encoding="utf-8")
+    for token in ("PIPESTATUS", "exit status", "Static defect guards"):
+        assert token in text, f"verify.sh section missing gate-hardening token: {token}"
