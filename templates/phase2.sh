@@ -590,7 +590,23 @@ if [ "$SKIP_AIDER" = false ]; then
     # large file in full risks truncation and degenerate loops under the 10K-token
     # context window). The threshold mirrors PHASE1_SPEC's ~120-line per-step output
     # budget; override via PHASE2_WHOLE_FILE_MAX_LINES for stacks with verbose files.
+    # Note this check is PER FILE, not aggregate: several sub-threshold targets can
+    # together exceed the budget in one whole-format invocation. Bounding total
+    # generation per step is the planner's job (PHASE1_SPEC §1 output budget), not
+    # phase2.sh's — keep that enforcement in one place rather than splitting it here.
     WHOLE_FILE_MAX_LINES=${PHASE2_WHOLE_FILE_MAX_LINES:-120}
+    # Validate the override: a non-integer value (typo, units like "120 lines",
+    # stray spaces) would make the `-gt` test below error per file and — since
+    # that test runs in an `if` condition, exempt from `set -e` — silently treat
+    # every existing file as whole-safe, sending oversized files through the whole
+    # format and reintroducing the degenerate loop this threshold exists to
+    # prevent. Reject anything non-numeric (or zero) and fall back to the default.
+    case "$WHOLE_FILE_MAX_LINES" in
+        ''|*[!0-9]*|0)
+            logf_err "==> WARN: ignoring invalid PHASE2_WHOLE_FILE_MAX_LINES='${WHOLE_FILE_MAX_LINES}' (must be a positive integer); using 120."
+            WHOLE_FILE_MAX_LINES=120
+            ;;
+    esac
     EDIT_FMT_ARGS=()
     _file_target_count=$(( ${#FILE_ARGS[@]} / 2 ))
     _existing_target_count=${#_EXISTING_TARGETS[@]}
