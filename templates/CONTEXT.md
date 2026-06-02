@@ -10,6 +10,11 @@
 
 - _Rule the code must never violate. Examples: "user IDs are always UUIDs, never integers", "free tier users cannot have more than 3 active items"._
 
+## Naming & paths
+
+- _Base package and its directory path, written out so the executor never guesses the layout. For JVM stacks the package maps to a directory by replacing each `.` with `/`: e.g. package `com.example.app0501` → `src/main/java/com/example/app0501/` (tests at `src/test/java/com/example/app0501/`). Directory names never contain `.` or `()`._
+- _The exact module/artifact name with its precise spelling and digit count (e.g. `app0501`, four digits), plus any other literal identifiers steps must reproduce verbatim._
+
 ## Public API contracts
 
 - `function_name(args) -> ReturnType` — _what callers expect; do not change the signature without a coordinated migration._

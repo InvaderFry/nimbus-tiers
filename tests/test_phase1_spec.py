@@ -95,6 +95,42 @@ def test_java_http_client_consistency_guardrail_present() -> None:
         assert token in section, f"Java HTTP-client guardrail missing token: {token}"
 
 
+def test_java_package_to_directory_guardrail_present() -> None:
+    """The Java guardrails must teach package-name → directory-path mapping.
+
+    A local executor improvises the source layout when a step leaves it
+    implicit, producing the package name as a single dotted directory
+    (src/main/java/com.example/...) or a parenthesised root
+    (src/main/java(com.example.app)/...). The spec must state the dot→slash
+    mapping and require steps to list full slash-separated paths. Regressing
+    this reopens the layout bug that got steps rejected during Phase 2.
+
+    Scoped to the Java guardrails section.
+    """
+    section = _section(SPEC_PATH.read_text(encoding="utf-8"), "### Java", None)
+    for token in ("Package-to-directory mapping", "com.example.app0501",
+                  "com/example/app0501", "Files to change"):
+        assert token in section, f"Java package→directory guardrail missing token: {token}"
+
+
+def test_context_md_section_requires_naming_and_paths() -> None:
+    """§0 must require CONTEXT.md to pin naming & path conventions.
+
+    CONTEXT.md is read on every step, so it is the place to fix the exact base
+    package, its directory path, and the precise module name with its digit
+    count (app0501, four digits) — the concrete values the executor got wrong.
+
+    Scoped to §0 so the tokens prove the rule lives in the CONTEXT.md section.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 0. CONTEXT.md",
+        "### 1. PLAN.md",
+    )
+    for token in ("Naming & path conventions", "digit count", "app0501"):
+        assert token in section, f"§0 CONTEXT.md section missing naming/paths token: {token}"
+
+
 def test_verify_sh_requires_exit_propagation_and_static_guards() -> None:
     """§4 must require exit-status propagation and allow cheap static defect guards.
 
