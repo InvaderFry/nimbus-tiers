@@ -25,22 +25,32 @@ def _extract_jvm_dotted_dir_re() -> str:
 
 
 def test_malformed_path_guard_covers_dotted_jvm_dirs() -> None:
-    """The post-Aider malformed-path guard must check the dotted-JVM-dir pattern.
+    """The malformed-path pattern must be wired into BOTH guards.
 
     The pre-existing guard only matched the literal '**' artifact; neither
     reported failure path contained '**', so they slipped through to a generic
-    'planned file missing' rejection. The guard must now also grep the JVM
-    package-as-directory pattern and clean up the offending artifacts.
+    'planned file missing' rejection. Both arms must now use the JVM
+    package-as-directory pattern. Rather than count occurrences (brittle to
+    benign refactors), assert each arm by its distinct, behavior-bearing text:
+    the pre-Aider arm's per-path WARN and the post-Aider arm's explanation.
     """
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    assert "_JVM_DOTTED_DIR_RE" in text, "phase2.sh missing _JVM_DOTTED_DIR_RE definition"
-    # Used by both the pre-Aider planned-path skip and the post-Aider guard.
-    assert text.count("_JVM_DOTTED_DIR_RE") >= 3, (
-        "expected _JVM_DOTTED_DIR_RE to be defined and used in both the pre-Aider "
-        "and post-Aider guards"
+    assert re.search(r"^_JVM_DOTTED_DIR_RE=", text, flags=re.MULTILINE), (
+        "phase2.sh missing _JVM_DOTTED_DIR_RE definition"
     )
+    # Pre-Aider planned-path skip.
+    assert "skipping planned path with a dotted/parenthesised directory" in text, (
+        "pre-Aider guard should skip malformed planned paths with a clear WARN"
+    )
+    # Post-Aider working-tree guard.
     assert "package-name-as-directory" in text, (
         "post-Aider guard should explain the package-name-as-directory bug"
+    )
+    # The post-Aider guard must expand untracked dirs, or it misses a malformed
+    # dir created in a greenfield step (porcelain collapses '?? src/').
+    assert "--untracked-files=all" in text, (
+        "post-Aider guard must use --untracked-files=all so a greenfield "
+        "malformed dir is not hidden by porcelain's untracked-tree collapse"
     )
 
 
@@ -63,11 +73,19 @@ VALID = [
 
 
 def _grep_matches(regex: str, line: str) -> bool:
-    """Return True iff `grep -E regex` matches the line, mirroring phase2.sh."""
+    """Return True iff `grep -E regex` matches the line, mirroring phase2.sh.
+
+    grep returns 0 on match, 1 on no-match, and >=2 on error (e.g. an invalid
+    ERE). Treat rc 2 as a hard failure rather than silently folding it into
+    "no match" — otherwise a broken pattern would pass the VALID-path tests.
+    """
     result = subprocess.run(
         ["grep", "-qE", regex],
         input=line,
         text=True,
+    )
+    assert result.returncode in (0, 1), (
+        f"grep errored (rc={result.returncode}) on regex {regex!r} — invalid ERE?"
     )
     return result.returncode == 0
 

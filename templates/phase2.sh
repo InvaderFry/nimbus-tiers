@@ -519,6 +519,7 @@ if [ "$SKIP_AIDER" = false ]; then
     # complicate the --file plumbing and real paths here never contain spaces.
     FILE_ARGS=()
     PARSED_COUNT=0
+    _MALFORMED_PLANNED=0
     _PLACEHOLDERS=()
     _EXISTING_TARGETS=()
     while IFS= read -r f; do
@@ -557,9 +558,13 @@ if [ "$SKIP_AIDER" = false ]; then
         # otherwise CREATE the malformed directory from a bad plan. Left out of
         # FILE_ARGS, the path is reported by the existence guard and the step is
         # rejected cleanly. See PHASE1_SPEC §Java (package-to-directory mapping).
+        # Count the rejection separately from PARSED_COUNT so the post-loop
+        # messaging can say "malformed" rather than the misleading "no entries
+        # parsed" when a malformed path is the only thing listed.
         if printf '%s' "$path" | grep -qE "$_JVM_DOTTED_DIR_RE"; then
-            logf_err "==> WARN: skipping planned path with a dotted directory under a JVM source root (package-name-as-directory bug?): $path" \
+            logf_err "==> WARN: skipping planned path with a dotted/parenthesised directory under a JVM source root (package-name-as-directory bug?): $path" \
                      "    A Java/Kotlin package maps to directories by replacing '.' with '/': com.example.app -> com/example/app."
+            _MALFORMED_PLANNED=$((_MALFORMED_PLANNED + 1))
             continue
         fi
         PARSED_COUNT=$((PARSED_COUNT + 1))
@@ -591,7 +596,12 @@ if [ "$SKIP_AIDER" = false ]; then
         fi
     done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
 
-    if [ "$PARSED_COUNT" -eq 0 ]; then
+    if [ "$PARSED_COUNT" -eq 0 ] && [ "$_MALFORMED_PLANNED" -gt 0 ]; then
+        logf_err "==> WARN: every path in '## Files to change' in $STEP_FILE was rejected as a" \
+                 "    malformed JVM source path (${_MALFORMED_PLANNED} path(s) — see per-path WARNs above)." \
+                 "    Fix the package→directory layout in the step file (com.example.app -> com/example/app)." \
+                 "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
+    elif [ "$PARSED_COUNT" -eq 0 ]; then
         logf_err "==> WARN: no entries parsed from '## Files to change' in $STEP_FILE." \
                  "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#FILE_ARGS[@]}" -eq 0 ]; then
@@ -976,10 +986,23 @@ fi
 # component under a JVM source root (com.example as a directory instead of
 # com/example) — the package-name-as-directory bug a local executor produces
 # when a step leaves the layout implicit. See PHASE1_SPEC §Java.
-_MP=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
-        | grep -E '\*\*' || true)
-_MP_PKG=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null \
-        | grep -E "$_JVM_DOTTED_DIR_RE" || true)
+#
+# `--untracked-files=all` is REQUIRED: by default `git status --porcelain`
+# collapses an entirely-untracked subtree to its top component (a brand-new
+# `src/main/java/com.example/Foo.java` in a greenfield step where nothing under
+# src/ is tracked shows only as `?? src/`), so the dotted segment never reaches
+# grep and the guard silently misses it. `-uall` expands to individual files.
+#
+# Status is captured ONCE (one porcelain walk, not one per pattern) and reduced
+# to the effective on-disk path per entry before grepping: the 2-char status
+# code + space prefix is stripped, and for a rename/copy entry (`OLD -> NEW`)
+# only NEW — the path that now exists — is kept. Without this the guard would
+# fire on the OLD half of a *corrective* rename (e.g. fixing com.example/ ->
+# com/example/) and discard the very fix it should reward.
+_ST=$(git status --porcelain --untracked-files=all -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+_EFF=$(printf '%s\n' "$_ST" | sed -e 's/^...//' -e 's/^.* -> //')
+_MP=$(printf '%s\n' "$_EFF" | grep -E '\*\*' || true)
+_MP_PKG=$(printf '%s\n' "$_EFF" | grep -E "$_JVM_DOTTED_DIR_RE" || true)
 if [ -n "$_MP" ] || [ -n "$_MP_PKG" ]; then
     logf "==> ERROR: files with malformed paths detected — likely model output artifact. Step $NEXT NOT recorded."
     if [ -n "$_MP" ]; then
