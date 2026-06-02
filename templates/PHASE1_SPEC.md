@@ -533,10 +533,15 @@ these constraints. Omit sections for languages not used in the project.
   startup failure that unit tests (which mock the service) will not catch.
 - **HTTP-client / dependency consistency:** the HTTP client a step uses must
   match the starter actually on the classpath, and a step must use exactly
-  one client API consistently. `RestClient`, `RestTemplate`, and
-  `MockRestServiceServer`/`@RestClientTest` belong to `spring-boot-starter-web`
-  (blocking/servlet). `WebClient`, `WebClientResponseException`, and
-  `@WebFluxTest` belong to `spring-boot-starter-webflux` (reactive). A local
+  one client API consistently. `RestClient` and `RestTemplate` are the
+  blocking/servlet clients (in `spring-web`, present via
+  `spring-boot-starter-web`); their test tooling is
+  `MockRestServiceServer`/`@RestClientTest`. `WebClient` and
+  `WebClientResponseException` are the reactive client (in `spring-webflux`,
+  present via `spring-boot-starter-webflux`); its slice is `@WebFluxTest`. (The
+  slice annotations and `MockRestServiceServer` actually ship in
+  `spring-boot-starter-test`/`spring-test`, not the runtime starters — but each
+  targets one stack, so don't pair them across stacks.) A local
   model frequently hallucinates a *mix* — e.g. a `WebClient.Builder` field
   configured with `RestClient.Builder`/`RestTemplate`-only methods like
   `requestFactory(...)`, or a `WebClient` service paired with an
