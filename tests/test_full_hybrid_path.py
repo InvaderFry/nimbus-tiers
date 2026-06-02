@@ -77,8 +77,8 @@ def test_full_hybrid_includes_stack_file(stack: str, expected_dest: str) -> None
 def test_full_hybrid_java_maven_application_dest_uses_package_name() -> None:
     specs = FullHybridPath(stack="java-maven", package_name="myapp").template_files()
     dests = {str(s.dest_relative) for s in specs}
-    assert "src/main/java/com/example/myapp/Application.java" in dests
-    assert "src/test/java/com/example/myapp/ApplicationTest.java" in dests
+    assert "src/main/java/com/example/myapp/AppApplication.java" in dests
+    assert "src/test/java/com/example/myapp/AppApplicationTest.java" in dests
 
 
 def test_full_hybrid_no_duplicate_destinations() -> None:

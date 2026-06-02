@@ -152,7 +152,7 @@ The 16GB VRAM on this build is workable for 14B–24B quantized models. The 64GB
 │   PLANNING    │     │   EXECUTION   │     │    REVIEW     │
 │               │     │               │     │               │
 │  Claude Code  │     │  Local Aider  │     │  Claude Code  │
-│  Opus         │     │  Qwen3-32B │     │  Opus         │
+│  Opus         │     │  Qwen2.5-Coder-14B │     │  Opus         │
 │  Plan Mode    │     │  Step-by-step │     │  /review      │
 └───────────────┘     └───────┬───────┘     └───────────────┘
                               │
@@ -182,7 +182,7 @@ The three markdown files — PLAN.md, TESTS.md, and CONTEXT.md — form the comp
 | Phase | Primary Tool | Model | Why |
 |---|---|---|---|
 | Planning | Claude Code | Opus (frontier) | Frontier judgment; one-time cost per feature |
-| Execution | Aider (WSL) | Qwen3-32B (local) | Unlimited volume, no quota burn |
+| Execution | Aider (WSL) | Qwen2.5-Coder-14B (local) | Unlimited volume, no quota burn |
 | Fallback Execution | Aider (WSL) | Groq llama-3.3-70b | Better quality when local stalls |
 | Debug Escalation | ChatGPT | GPT frontier | Strong at "what's wrong here" |
 | Review | Claude Code | Opus (frontier) | Frontier review catches subtle issues |
@@ -594,7 +594,7 @@ Also produce:
 2. Launch Aider with all three phase files in read-only context:
 
 ```bash
-aider --model openai/Qwen3-32B-exl3 \
+aider --model openai/Qwen2.5-Coder-14B-Instruct-exl2 \
       --openai-api-base http://localhost:5000/v1 \
       --openai-api-key notneeded \
       --read PLAN.md --read TESTS.md --read CONTEXT.md
@@ -611,7 +611,7 @@ Do not modify files not listed in that step.
 5. Continue through all steps
 
 **Critical rules:**
-- One step per turn (prevents Qwen3-32B going off-script)
+- One step per turn (prevents local models from going off-script)
 - Don't proceed if a step's tests fail
 - If local fails twice on the same step, escalate using the objective triggers above
 
@@ -622,7 +622,7 @@ Do not modify files not listed in that step.
 /model groq/llama-3.3-70b-versatile
 
 # After successful step, swap back
-/model openai/Qwen3-32B-exl3
+/model openai/Qwen2.5-Coder-14B-Instruct-exl2
 ```
 
 **Auto-commit modes:**
@@ -714,7 +714,11 @@ plans/
 # Optionally gitignore these per-task working files:
 PLAN.md
 TESTS.md
-.aider.tags.cache.v3/
+# Aider working files — use broad glob so Aider doesn't rewrite .gitignore on startup;
+# re-include the two committed config files with negations:
+.aider*
+!.aider.conf.yml
+!.aiderignore
 ```
 
 Raw prompts, cloud transcripts, stack traces with customer data, and debugging dumps should never be committed. If your PLAN.md contains sensitive context (production data, customer info, proprietary details), gitignore it.
@@ -854,7 +858,7 @@ Create `~/.aider.conf.yml` in WSL. The exact YAML format and supported keys can 
 
 ```yaml
 # Default to local model via TabbyAPI's OpenAI-compatible endpoint
-model: openai/Qwen3-32B-exl3
+model: openai/Qwen2.5-Coder-14B-Instruct-exl2
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
@@ -897,7 +901,7 @@ aider --read PLAN.md --read TESTS.md --read CONTEXT.md
 /model groq/llama-3.3-70b-versatile
 
 # Switch back to local
-/model openai/Qwen3-32B-exl3
+/model openai/Qwen2.5-Coder-14B-Instruct-exl2
 
 # Add a file to context (makes it editable)
 /add src/new_feature.py
@@ -987,7 +991,7 @@ For a hobbyist who codes 3 hours/week, just use Claude Code straight. The hybrid
 ```
 9:00 AM — Open Claude Code, plan today's feature (PLAN.md + TESTS.md + CONTEXT.md)
 9:30 AM — Switch to WSL, launch Aider
-9:30 AM–12:00 PM — Execute Steps 1-5 with local Qwen3-32B
+9:30 AM–12:00 PM — Execute Steps 1-5 with local Qwen2.5-Coder-14B
 12:00 PM — Lunch
 1:00 PM — Continue Steps 6-10
 3:00 PM — Run VERIFY.md checklist
@@ -1037,7 +1041,7 @@ Evening: Apply all fixes, merge each branch cleanly.
 
 When stuck on a design question:
 
-1. Local Qwen3-32B generates 3-5 candidate implementations (10 min, $0)
+1. Local Qwen2.5-Coder-14B generates 3-5 candidate implementations (10 min, $0)
 2. Paste all candidates into Claude Code with this prompt:
 
 ```
@@ -1088,7 +1092,7 @@ All phases run local. No cloud calls anywhere.
 Verify data classification first — see Appendix D.
 
 Plan: Open WebUI with Qwen3 14B, manually craft PLAN.md
-Execute: Aider with Qwen3-32B + read CONTEXT.md
+Execute: Aider with Qwen2.5-Coder-14B + read CONTEXT.md
 Review: Aider with /review or manual diff review + VERIFY.md
 ```
 
@@ -1100,7 +1104,7 @@ This is genuinely useful for the 10-20% of work where compliance matters. The ar
 
 ### Failure 1: The Plan Was Too Vague
 
-**Symptom:** Local Qwen3-32B produces technically-correct but architecturally-wrong code.
+**Symptom:** The local model produces technically-correct but architecturally-wrong code.
 
 **Cause:** Frontier models filled in implicit context that local can't.
 
@@ -1113,7 +1117,7 @@ This is genuinely useful for the 10-20% of work where compliance matters. The ar
 
 ### Failure 2: Local Goes Off-Script
 
-**Symptom:** Qwen3-32B "improves" things you didn't ask for, skips steps, refactors unrelated code.
+**Symptom:** The local model "improves" things you didn't ask for, skips steps, refactors unrelated code.
 
 **Cause:** Model autonomy overriding the plan.
 
@@ -1279,14 +1283,14 @@ Specific tools and models will rotate, but if you internalize the pattern, you c
 | Write a regex | Open WebUI / Groq | Any |
 | Generate boilerplate | Cline / Aider | Qwen2.5-Coder 14B |
 | Write unit tests | Aider | Qwen2.5-Coder 14B |
-| Single-file refactor | Aider | Qwen3-32B |
+| Single-file refactor | Aider | Qwen2.5-Coder-14B |
 | Multi-file refactor | Claude Code | Opus (frontier) |
-| Code review (small) | Aider `/review` | Qwen3-32B |
+| Code review (small) | Aider `/review` | Qwen2.5-Coder-14B |
 | Code review (large) | Claude Code | Opus / Sonnet |
 | Architecture design | Claude Code | Opus (frontier) |
 | Hard debugging | ChatGPT | GPT frontier |
 | Plan creation | Claude Code | Opus plan mode |
-| Plan execution | Aider | Qwen3-32B |
+| Plan execution | Aider | Qwen2.5-Coder-14B |
 | Final review | Claude Code | Opus (frontier) |
 | Documentation | Cline / Aider | Qwen2.5-Coder 14B |
 | SQL generation | Open WebUI | Qwen2.5-Coder 14B |

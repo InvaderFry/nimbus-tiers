@@ -377,15 +377,15 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
                 _SERVED_MATCH=$?
                 set -e
                 if [ -n "$_SERVED_IDS" ] && [ "$_SERVED_MATCH" -ne 0 ]; then
-                    echo "==> WARN: configured model and served model differ."
-                    echo "    configured (.aider.conf.yml / AIDER_MODEL): ${_PREFLIGHT_MODEL}"
-                    echo "    served by ${_PREFLIGHT_BASE_URL%/} (/models): ${_SERVED_IDS}"
-                    echo "    Under TabbyAPI the 'model:' field is a label, not a selector — the"
-                    echo "    server runs whatever is loaded. Aider's banner will show the label,"
-                    echo "    so it can misname the model that actually runs. If output quality is"
-                    echo "    poor (e.g. corrupted/verbatim-copy failures), check the inference"
-                    echo "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit"
-                    echo "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
+                    logf_err "==> WARN: configured model and served model differ." \
+                        "    configured (.aider.conf.yml / AIDER_MODEL): ${_PREFLIGHT_MODEL}" \
+                        "    served by ${_PREFLIGHT_BASE_URL%/} (/models): ${_SERVED_IDS}" \
+                        "    Under TabbyAPI the 'model:' field is a label, not a selector — the" \
+                        "    server runs whatever is loaded. Aider's banner will show the label," \
+                        "    so it can misname the model that actually runs. If output quality is" \
+                        "    poor (e.g. corrupted/verbatim-copy failures), check the inference" \
+                        "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit" \
+                        "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
                 fi
             fi
             ;;
@@ -1014,12 +1014,12 @@ while IFS= read -r _pf; do
     case "$_ppath" in *" "*) continue ;; esac
     [[ "$_ppath" =~ $_SCRUB_EXTS_RE ]] || continue
     [ -f "$_ppath" ] || continue
-    _before=$(wc -l < "$_ppath")
+    _before=$(wc -l < "$_ppath" | tr -d '[:space:]')
     _tmp=$(mktemp)
     grep -Ev \
         '^[[:space:]]*`{3,}[[:space:]]*$|^[[:space:]]*(src|test|main|lib|app)/[^[:space:]]+\.(java|kt|scala|groovy|py|ts|tsx|js|jsx|go|rs|rb|cs|cpp|c|h)[[:space:]]*$' \
         "$_ppath" > "$_tmp" || true
-    _after=$(wc -l < "$_tmp")
+    _after=$(wc -l < "$_tmp" | tr -d '[:space:]')
     if [ "$_before" -ne "$_after" ]; then
         mv "$_tmp" "$_ppath"
         _SCRUBBED+=("$_ppath (removed $((_before - _after)) artifact line(s))")
