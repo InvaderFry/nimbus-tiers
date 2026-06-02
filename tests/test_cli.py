@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -100,6 +102,67 @@ def test_cli_default_stack_is_java_maven(
     assert rc == 0
     aider_conf = (project_dir / ".aider.conf.yml").read_text()
     assert "test-cmd: ./mvnw test" in aider_conf
+
+
+# ---------------------------------------------------------------------------
+# Regression: the `.aider*` .gitignore glob must not exclude committed config
+# ---------------------------------------------------------------------------
+
+
+def test_generated_project_commits_aider_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The template .gitignore uses a broad ``.aider*`` glob to stop Aider
+    rewriting .gitignore on startup. That glob also matches ``.aider.conf.yml``
+    and ``.aiderignore`` — the two config files the generator writes — so without
+    re-include negations, ``git add .`` silently drops them and the scaffold ships
+    with no tracked Aider config (a regression the rest of the suite misses because
+    it mocks git and only asserts on-disk presence). Drive the real generator and
+    real git, then assert both files land in the index while transient ``.aider*``
+    working files stay ignored.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    # Hermetic git: ignore host global/system config (e.g. enforced commit
+    # signing) and supply identity via env so the initial commit succeeds
+    # deterministically regardless of the runner's environment.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "test")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@example.com")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "test")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@example.com")
+
+    project_dir = tmp_path / "proj"
+    # Note: NOT _patched_main — we want the real GitInitializer so that the actual
+    # ``git add .`` runs against the generated .gitignore. That integration is the
+    # whole point of this guard.
+    rc = main(["my-proj", "--path", str(project_dir), "--stack", "python"])
+    assert rc == 0
+
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert ".aider.conf.yml" in tracked, (
+        ".aider.conf.yml must be committed, not swallowed by the `.aider*` glob"
+    )
+    assert ".aiderignore" in tracked, (
+        ".aiderignore must be committed, not swallowed by the `.aider*` glob"
+    )
+
+    # Transient Aider working files must still be ignored (they also match `.aider*`).
+    (project_dir / ".aider.chat.history.md").write_text("transient\n")
+    check = subprocess.run(
+        ["git", "check-ignore", ".aider.chat.history.md"],
+        cwd=project_dir,
+        capture_output=True,
+        text=True,
+    )
+    assert check.returncode == 0, "transient `.aider*` working files must remain gitignored"
 
 
 # ---------------------------------------------------------------------------
