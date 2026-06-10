@@ -161,6 +161,20 @@ Notes:
 - `--yes` auto-confirms file prompts so the run never hangs.
 - Each successful run produces exactly one commit.
 
+#### What to expect from the local executor, by stack
+
+- **Python / Node:** most steps succeed locally on a well-served 14B
+  (32K context, Q8 KV cache — see `docs/tabbyapi-nimbus-example.yml`).
+- **Java Spring Boot (Maven/Gradle):** the hardest workload for a 14B-class
+  model — each step's output is 3–5× more verbose than the Python equivalent,
+  and the framework has known traps (HTTP-client mixing, `@SpringBootTest` vs
+  test slices, package-path bugs; `PHASE1_SPEC.md` carries guardrails for
+  each). Expect a meaningful fraction of steps to need escalation: set
+  `PHASE2_FALLBACK_MODEL` (below) so failed steps retry on Groq automatically.
+  Escalations on Java are normal operation, not a sign the pipeline is broken —
+  but the >30% rule at the end of this section still applies: above that,
+  invest in more specific step files, not a bigger model.
+
 #### When a step keeps failing
 
 **Automatic fallback (recommended):** export `PHASE2_FALLBACK_MODEL` (and the
