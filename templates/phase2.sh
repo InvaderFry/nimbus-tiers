@@ -557,6 +557,24 @@ if [ ! -f "$WIP_FILE" ]; then
     fi
 fi
 
+# Gate-integrity lint: refuse to trust a verify.sh containing the known
+# exit-code-swallowing pattern `if ! wait "$pid"; then status=$?`. Inside that
+# branch $? holds the status of the NEGATED test (always 0), so every build
+# failure reports success and a broken step gets committed as DONE (observed:
+# a pom.xml with non-resolving coordinates shipped as a "passing" step).
+# Capture the real status instead: `wait "$pid" || status=$?`. This lints the
+# one pattern that has actually shipped; verify.sh authorship rules live in
+# PHASE1_SPEC §4.
+if [ -f verify.sh ] && grep -qE 'if[[:space:]]+![[:space:]]+wait\b' verify.sh; then
+    logf_err "==> ERROR: verify.sh contains an 'if ! wait ...' status check, which swallows the" \
+             "    build's real exit code (inside that branch \$? is the status of the negated" \
+             "    test — always 0). The gate is non-authoritative: failing builds would be" \
+             "    recorded DONE. Fix verify.sh to capture the status directly, e.g.:" \
+             "        wait \"\$pid\" || status=\$?" \
+             "    (see PHASE1_VERIFY_HELPER.md), then re-run ./phase2.sh."
+    exit 1
+fi
+
 SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
@@ -763,12 +781,26 @@ if [ "$SKIP_AIDER" = false ]; then
     _existing_target_count=${#_EXISTING_TARGETS[@]}
     _whole_safe=true
     _oversized_target=""
+    _buildfile_target=""
     if [ "$_file_target_count" -eq 0 ]; then
         # No explicit targets: leave Aider on its default (diff). Forcing whole
         # with no --file args invites from-scratch hallucination.
         _whole_safe=false
     fi
     for _et in ${_EXISTING_TARGETS[@]+"${_EXISTING_TARGETS[@]}"}; do
+        # An existing build file is never whole-safe regardless of size:
+        # dependency coordinates are verbatim identifiers, and whole-format
+        # regeneration makes the model re-emit every one of them — the
+        # observed corruption vector (a 40-line pom.xml regenerated in full
+        # with spring-boot-starter-parent mangled to spring-boot-starters-parent).
+        # A diff edit only touches the lines the step adds.
+        case "${_et##*/}" in
+            pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts)
+                _whole_safe=false
+                _buildfile_target="$_et"
+                break
+                ;;
+        esac
         # wc -l counts newlines, so a final line without a trailing newline is
         # uncounted — the count is a lower bound, which is fine for a threshold.
         _lc=$(wc -l < "$_et" 2>/dev/null | tr -cd '0-9')
@@ -786,6 +818,8 @@ if [ "$SKIP_AIDER" = false ]; then
         else
             logf "==> All ${_file_target_count} editable target(s) are new or <= ${WHOLE_FILE_MAX_LINES} lines — using Aider whole-file edit format (more reliable for local models than diff/SEARCH/REPLACE; verify.sh gates any dropped content)."
         fi
+    elif [ -n "$_buildfile_target" ]; then
+        logf "==> Existing build file ${_buildfile_target} is an edit target — using diff edit format for this step. Whole-file regeneration of a build file invites dependency-coordinate corruption (e.g. spring-boot-starter-parent -> spring-boot-starters-parent); keep the edit small and anchored on exact existing lines (see PHASE1_SPEC §Java)."
     elif [ -n "$_oversized_target" ]; then
         logf "==> Existing target ${_oversized_target} exceeds the ${WHOLE_FILE_MAX_LINES}-line whole-file threshold — using diff edit format for this step. Keep the edit small and give the model verbatim anchor text in the step file (see PHASE1_SPEC §1)."
     fi
@@ -1167,6 +1201,49 @@ if [ -n "$_MP" ] || [ -n "$_MP_PKG" ]; then
         while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP_PKG"
     fi
     logf "    Discarding malformed files and resetting working tree."
+    # Unstage FIRST: Aider stages the new files it creates, and neither
+    # `git checkout -- .` (restores from the index, which still holds them)
+    # nor `git clean -fd` (skips index-tracked paths) touches staged new
+    # files — without the reset they survive cleanup and wedge later runs.
+    git reset -q HEAD -- . 2>/dev/null || true
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
+    _mark_step_failed
+    rm -f "$WIP_FILE"
+    exit 1
+fi
+
+# Build-file coordinate-corruption guard: when a local model regenerates
+# pom.xml / build.gradle it can corrupt well-known coordinates by a few
+# characters (observed: spring-boot-starter-parent -> spring-boot-starters-parent,
+# spring-boot-starter-* -> spring-boot-started-*). Those near-miss names
+# resolve to nothing, but only a CORRECT verify.sh catches that — and a buggy
+# generated gate is exactly how one such pom shipped as a "passing" step. This
+# static guard rejects the known corruption class before verify.sh ever runs,
+# independent of the generated gate's quality. Only build files touched THIS
+# run are inspected; pre-existing content is not this step's responsibility.
+# `spring-boot-start(ed|ers)` matches the corruptions but not the legitimate
+# `spring-boot-starter*` names ('er' is neither 'ed' nor 'ers' at that offset).
+_BUILD_COORD_CORRUPTION_RE='spring-boot-start(ed|ers)'
+_CORRUPT_BUILD_FILES=()
+for _bf in pom.xml build.gradle build.gradle.kts settings.gradle settings.gradle.kts; do
+    [ -f "$_bf" ] || continue
+    [ -n "$(git status --porcelain -- "$_bf" 2>/dev/null)" ] || continue
+    if grep -qE "$_BUILD_COORD_CORRUPTION_RE" "$_bf"; then
+        _CORRUPT_BUILD_FILES+=("$_bf")
+    fi
+done
+if [ "${#_CORRUPT_BUILD_FILES[@]}" -gt 0 ]; then
+    logf "==> ERROR: corrupted dependency coordinates detected — step $NEXT NOT recorded."
+    for _bf in "${_CORRUPT_BUILD_FILES[@]}"; do
+        logf "    $_bf matches '${_BUILD_COORD_CORRUPTION_RE}' — a near-miss corruption of a" \
+             "    spring-boot-starter-* coordinate (e.g. spring-boot-starters-parent," \
+             "    spring-boot-started-web). These artifacts do not exist and cannot resolve."
+    done
+    logf "    Discarding this run's changes and resetting working tree." \
+         "    This is a model-output QUALITY failure — see the serving checklist in" \
+         "    .aider.conf.yml / docs/tabbyapi-nimbus-example.yml before retrying."
+    git reset -q HEAD -- . 2>/dev/null || true
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
     _mark_step_failed

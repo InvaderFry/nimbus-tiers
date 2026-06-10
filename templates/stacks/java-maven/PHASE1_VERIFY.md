@@ -29,10 +29,13 @@ run_tests_quiet() {
     fi
   done
 
+  # Capture wait's REAL exit status. Do NOT write `if ! wait "$pid"; then
+  # status=$?` — inside that branch `$?` is the status of the *negated* test
+  # (always 0), so every Maven failure is recorded as success and a broken
+  # build gets committed as a passing step. `|| var=$?` is errexit-safe and
+  # preserves the real code.
   local mvn_status=0
-  if ! wait "$mvn_pid"; then
-    mvn_status=$?
-  fi
+  wait "$mvn_pid" || mvn_status=$?
 
   if [ "$mvn_status" -eq 0 ]; then
     return 0
@@ -65,6 +68,10 @@ Notes:
 
 - `verify.sh` already runs under `set -euo pipefail`. Keep `set -o pipefail`
   in scope so a Maven failure isn't masked by log filtering.
+- Never wrap `wait` (or any status-bearing command) in `if !` and read `$?`
+  inside the branch — that reads the *negated* test's status (always 0) and
+  silently converts build failures into passes. Capture the status
+  immediately: `cmd || rc=$?`, or `rc=$?` on the very next line.
 - Full Maven output is written to `target/verify.log`; only filtered failures
   are printed to stdout.
 - The filter preserves application-startup failures, errors, "Caused by"

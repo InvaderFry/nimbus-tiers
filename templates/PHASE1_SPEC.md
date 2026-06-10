@@ -294,6 +294,12 @@ A Bash script that:
   `${PIPESTATUS[0]}`); never let a non-zero build look like success. This is
   the difference between "tests passed" and "the gate silently swallowed a
   compile failure."
+- **Capture exit status immediately and directly.** Read `$?` on the very
+  next line after the command, or use the errexit-safe `cmd || rc=$?`. Never
+  read `$?` inside the body of `if ! cmd; then` — there it holds the status
+  of the *negated* test (always 0), so the failure is silently discarded.
+  This exact pattern once reported a non-resolving `pom.xml` as a passing
+  step; `phase2.sh` now refuses to run a `verify.sh` containing `if ! wait`.
 - **Static defect guards (cheap defense-in-depth):** when a step's correctness
   depends on a constraint a slice test can miss, add a fast `grep`-based check
   that fails the gate on the known-wrong pattern. Example for a blocking
@@ -548,6 +554,17 @@ these constraints. Omit sections for languages not used in the project.
   This is backstopped deterministically: `phase2.sh` rejects any directory
   component containing a `.` under a JVM source root (`src/main|test/java`, etc.)
   — see §4 — but planning the paths explicitly is what avoids the wasted run.
+- **Build-file edits (`pom.xml` / `build.gradle`):** dependency coordinates
+  are verbatim identifiers — a few characters of drift produces a name that
+  resolves to nothing (observed: `spring-boot-starter-parent` →
+  `spring-boot-starters-parent`, `spring-boot-starter-web` →
+  `spring-boot-started-web`). A step that edits a build file must be a
+  minimal targeted edit: quote the exact line(s) to add and an exact existing
+  anchor line from the file, and never instruct a full-file rewrite — every
+  line the model regenerates is a line it can corrupt. This is backstopped
+  deterministically: `phase2.sh` forces diff edit format when a build file is
+  a target and statically rejects the `spring-boot-start(ed|ers)` corruption
+  class — but a tight plan avoids the wasted run.
 - **Map.of() arity limit:** `Map.of(k, v, …)` has fixed-arity overloads
   that accept at most 10 key-value pairs. For maps with more than 10 entries,
   instruct the executor to use `Map.ofEntries(Map.entry(k1, v1), …)` instead.

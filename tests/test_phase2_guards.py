@@ -269,6 +269,138 @@ def test_strict_model_match_gate_is_available() -> None:
     )
 
 
+# ----- exit-code integrity of the generated gate (0609 Java failure) -----------
+
+JAVA_HELPER_PATHS = [
+    REPO_ROOT / "templates" / "stacks" / "java-maven" / "PHASE1_VERIFY.md",
+    REPO_ROOT / "templates" / "stacks" / "java-gradle" / "PHASE1_VERIFY.md",
+]
+
+
+@pytest.mark.parametrize("helper", JAVA_HELPER_PATHS, ids=["maven", "gradle"])
+def test_java_helpers_capture_real_wait_status(helper: Path) -> None:
+    """The JVM helpers must not ship the `if ! wait` exit-swallowing pattern.
+
+    `if ! wait "$pid"; then status=$?` reads the status of the NEGATED test
+    (always 0) inside the branch, so every build failure reports success. The
+    0609 Java run committed a pom.xml with non-resolving coordinates as a
+    'passing' step because the generated verify.sh inherited this pattern
+    verbatim from the helper. The fix is `wait "$pid" || status=$?`.
+    """
+    text = helper.read_text(encoding="utf-8")
+    # The pattern may legitimately appear in prose/comments warning against it;
+    # only an actual code line (statement starting with `if ! wait`) is a bug.
+    code_lines = [
+        ln for ln in text.splitlines()
+        if ln.strip().startswith("if ! wait")
+    ]
+    assert not code_lines, (
+        f"{helper.name} still contains the `if ! wait` exit-swallowing pattern "
+        f"as code: {code_lines}"
+    )
+    assert re.search(r'wait "\$\w+_pid" \|\| \w+_status=\$\?', text), (
+        f"{helper.name} must capture wait's real status via `|| status=$?`"
+    )
+
+
+def _extract_gate_lint_re() -> str:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    m = re.search(r"grep -qE '([^']*wait[^']*)' verify\.sh", text)
+    assert m, "gate-integrity lint pattern not found in phase2.sh"
+    return m.group(1)
+
+
+def test_gate_lint_rejects_exit_swallowing_verify() -> None:
+    """phase2.sh must refuse to run a verify.sh containing `if ! wait`.
+
+    Already-generated projects keep their buggy verify.sh even after the
+    helper templates are fixed; the lint stops them from recording false
+    DONEs until the gate is repaired.
+    """
+    regex = _extract_gate_lint_re()
+    assert _grep_matches(regex, 'if ! wait "$mvn_pid"; then'), (
+        "lint must match the buggy `if ! wait` pattern"
+    )
+    assert not _grep_matches(regex, 'wait "$mvn_pid" || mvn_status=$?'), (
+        "lint must not flag the correct `wait || status=$?` capture"
+    )
+
+
+# ----- build-file coordinate corruption (0609 Java step01) ----------------------
+
+
+def _extract_coord_corruption_re() -> str:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^_BUILD_COORD_CORRUPTION_RE='([^']*)'", text, flags=re.MULTILINE)
+    assert m, "_BUILD_COORD_CORRUPTION_RE assignment not found in phase2.sh"
+    return m.group(1)
+
+
+CORRUPTED_COORDS = [
+    "<artifactId>spring-boot-starters-parent</artifactId>",
+    "<artifactId>spring-boot-started-web</artifactId>",
+    'implementation "org.springframework.boot:spring-boot-started-test"',
+]
+
+VALID_COORDS = [
+    "<artifactId>spring-boot-starter-parent</artifactId>",
+    "<artifactId>spring-boot-starter-web</artifactId>",
+    "<artifactId>spring-boot-starter-test</artifactId>",
+    "<artifactId>spring-boot-starter</artifactId>",
+    "<artifactId>spring-boot-maven-plugin</artifactId>",
+]
+
+
+@pytest.mark.parametrize("line", CORRUPTED_COORDS)
+def test_coord_guard_flags_corrupted_coordinates(line: str) -> None:
+    regex = _extract_coord_corruption_re()
+    assert _grep_matches(regex, line), f"guard should flag corrupted coordinate: {line!r}"
+
+
+@pytest.mark.parametrize("line", VALID_COORDS)
+def test_coord_guard_allows_valid_coordinates(line: str) -> None:
+    regex = _extract_coord_corruption_re()
+    assert not _grep_matches(regex, line), f"guard must not flag valid coordinate: {line!r}"
+
+
+def test_build_files_are_never_whole_safe() -> None:
+    """Existing build files must force diff edit format.
+
+    The 0609 corruption happened because the 40-line scaffold pom.xml was
+    under the whole-file threshold, so the model regenerated the ENTIRE file
+    — re-emitting (and mangling) every coordinate. Diff edits only touch the
+    lines the step adds.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts" in text, (
+        "whole-format safety check must special-case JVM build files"
+    )
+    assert "Existing build file" in text and "diff edit format" in text, (
+        "the build-file diff fallback must be reported in the step log"
+    )
+
+
+def test_malformed_path_cleanup_unstages_first() -> None:
+    """Both discard-and-reset cleanups must `git reset` before checkout/clean.
+
+    Aider stages new files it creates; `git checkout -- .` restores them from
+    the index and `git clean -fd` skips index-tracked paths, so without the
+    reset the staged malformed files survive cleanup and wedge later runs
+    (observed after the 0609 step02 rejection).
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    for marker in ("Discarding malformed files", "Discarding this run's changes"):
+        idx = text.index(marker)
+        block = text[idx:idx + 700]
+        # Match the full command lines (with redirection) so the in-code
+        # comment that *mentions* `git checkout -- .` is not counted.
+        reset = block.find("git reset -q HEAD -- . 2>/dev/null")
+        checkout = block.find("git checkout -- . 2>/dev/null")
+        assert 0 <= reset < checkout, (
+            f"cleanup after {marker!r} must unstage (git reset) before git checkout/clean"
+        )
+
+
 # ----- python verify.sh helper --------------------------------------------------
 
 PY_HELPER_PATH = REPO_ROOT / "templates" / "stacks" / "python" / "PHASE1_VERIFY.md"
