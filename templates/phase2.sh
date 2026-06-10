@@ -423,7 +423,22 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
                         "    so it can misname the model that actually runs. If output quality is" \
                         "    poor (e.g. corrupted/verbatim-copy failures), check the inference" \
                         "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit" \
-                        "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
+                        "    KV cache; prefer 8,8 or FP16) before blaming the model choice." \
+                        "    Set PHASE2_STRICT_MODEL_MATCH=1 to make this mismatch fatal."
+                    # Opt-in hard gate. The default stays a warning because server id
+                    # formatting (folder name vs label) varies and an equality gate
+                    # would false-positive; but a mismatch that is real and ignored
+                    # run after run is how weak/wrong-quant output gets misattributed
+                    # to everything else first. Any non-empty value other than 0 arms it.
+                    case "${PHASE2_STRICT_MODEL_MATCH:-}" in
+                        ''|0) ;;
+                        *)
+                            logf_err "==> ERROR: aborting on model mismatch (PHASE2_STRICT_MODEL_MATCH is set)." \
+                                "    Load the configured model on the inference host, or fix the 'model:'" \
+                                "    label in .aider.conf.yml to match what the server actually serves."
+                            exit 1
+                            ;;
+                    esac
                 fi
                 # Context-length floor. The single most common root cause of
                 # degenerate repetition loops and phantom SEARCH/REPLACE blocks on
@@ -523,8 +538,14 @@ _NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
 # Refuse to start with a dirty working tree unless a WIP sentinel signals an
 # interrupted prior run for this step. Without this guard the bottom-of-script
 # `git add -A` would silently sweep unrelated edits into the step commit.
+# Uses _COMMIT_EXCLUDES (not _BUILD_EXCLUDES) so plans/*.log never counts as
+# dirty: step logs are normally gitignored, but this script writes $LOG_FILE
+# (preflight WARNs) BEFORE this check — so if .gitignore ever loses its
+# plans/*.log rule (e.g. Aider corrupts the file), each run would otherwise
+# create an untracked log and then block itself here, wedging the pipeline.
+# The logs are also excluded from the step commit, so ignoring them is safe.
 if [ ! -f "$WIP_FILE" ]; then
-    DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+    DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
     if [ -n "$DIRTY" ]; then
         echo "ERROR: working tree has uncommitted changes (and no interrupted-run sentinel)."
         echo "       Commit, stash, or discard them before running phase2.sh — otherwise they"
@@ -1029,10 +1050,13 @@ if [ "$SKIP_AIDER" = false ]; then
              "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
         git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
         git add -- "$HALT_FILE"                       # restage only the halt file
+        # Routing row is appended and staged BEFORE the commit so the halt
+        # commit leaves a clean tree (see the success-path note on ordering).
+        log_routing "step-${STEP_PAD}" "false" "0" "halted"
+        git add -- "$ROUTING_LOG" 2>/dev/null || true
         git commit -m "Step $NEXT: HALT (missing prior artifact)"
         git checkout -- . 2>/dev/null || true         # discard tracked-file edits
         git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
-        log_routing "step-${STEP_PAD}" "false" "0" "halted"
         rm -f "$WIP_FILE" "$FAIL_MARKER"
         exit 2
     fi
@@ -1068,12 +1092,40 @@ if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
          "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
     git reset -q HEAD -- . 2>/dev/null || true
     git add -- "$HALT_FILE"
+    log_routing "step-${STEP_PAD}" "false" "0" "halted"
+    git add -- "$ROUTING_LOG" 2>/dev/null || true
     git commit -m "Step $NEXT: HALT (missing prior artifact)"
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
-    log_routing "step-${STEP_PAD}" "false" "0" "halted"
     rm -f "$WIP_FILE" "$FAIL_MARKER"
     exit 2
+fi
+
+# Required-.gitignore-entries guard: Aider can corrupt .gitignore when a step
+# lists it as an edit target (observed: truncated to a single partial line).
+# Losing `plans/*.log` is self-blocking — phase2.sh's own step logs become
+# untracked files that trip the dirty-tree guard on later runs; losing `.aider*`
+# invites Aider's startup rewrite to dirty the tree on every run. Re-append any
+# required entry that is missing so one bad edit cannot wedge the pipeline. The
+# repaired file is committed with the step, so Phase 3 review still sees the
+# diff. grep -x matches whole lines and -F literal text: a commented-out or
+# glued-onto-another-line variant counts as missing and gets a clean rule line.
+_GITIGNORE_REQUIRED=('.aider*' '!.aider.conf.yml' '!.aiderignore' 'plans/*.log')
+_GITIGNORE_MISSING=()
+for _gi in "${_GITIGNORE_REQUIRED[@]}"; do
+    grep -qxF -- "$_gi" .gitignore 2>/dev/null || _GITIGNORE_MISSING+=("$_gi")
+done
+if [ "${#_GITIGNORE_MISSING[@]}" -gt 0 ]; then
+    {
+        printf '\n%s\n' "# Restored by phase2.sh: required entries were missing after the Aider run."
+        printf '%s\n' "${_GITIGNORE_MISSING[@]}"
+    } >> .gitignore
+    logf_err "==> WARN: .gitignore was missing required entries after the Aider run — restored:"
+    for _gi in "${_GITIGNORE_MISSING[@]}"; do
+        logf_err "    $_gi"
+    done
+    logf_err "    If the rest of .gitignore looks corrupted, restore it from history:" \
+             "      git checkout HEAD -- .gitignore   (then re-apply any intended edits)"
 fi
 
 # Malformed-path guard runs BEFORE the planned-file existence check so that
@@ -1142,7 +1194,10 @@ if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
         # false and Aider re-runs to complete the step. When the tree is clean
         # (Aider was killed before writing anything), remove WIP_FILE so the next
         # invocation runs Aider fresh instead of looping through SKIP_AIDER=true.
-        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+        # _COMMIT_EXCLUDES, not _BUILD_EXCLUDES: this run's own $LOG_FILE is
+        # untracked whenever .gitignore lost its plans/*.log rule, and would
+        # otherwise make every recovery run look "dirty".
+        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
         if [ -n "$_RECOVERY_DIRTY" ]; then
             logf "    The prior Aider run left uncommitted partial changes in the working tree." \
                  "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to" \
@@ -1218,10 +1273,16 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
+    # Stage first, measure the staged diff, THEN append the routing row and
+    # stage it too, so the step commit includes its own bookkeeping. Appending
+    # after the commit (the old order) left logs/ai-routing.csv dirty after
+    # every "successful" step — tripping the next run's dirty-tree guard and
+    # forcing extra bookkeeping-only commits.
+    DIFF_LINES=$(git diff --cached --numstat 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
+    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
+    git add -- "$ROUTING_LOG" 2>/dev/null || true
     git commit -m "Step $NEXT: complete"
     rm -f "$WIP_FILE" "$FAIL_MARKER"
-    DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
-    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
     logf "==> Step $NEXT committed."
 else
     logf "==> verify.sh failed after aider exited — step $NEXT NOT recorded."

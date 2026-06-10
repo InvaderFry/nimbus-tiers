@@ -177,3 +177,116 @@ def test_failure_marker_cleared_on_success_and_halt() -> None:
     assert text.count('rm -f "$WIP_FILE" "$FAIL_MARKER"') >= 3, (
         "FAIL_MARKER must be removed on the success path and both halt paths"
     )
+
+
+# ----- bookkeeping ordering and self-blocking guards (0609 failures) -----------
+
+
+def test_routing_row_is_committed_with_the_step() -> None:
+    """log_routing must run BEFORE the commit and the CSV must be staged.
+
+    The 0609 runs appended logs/ai-routing.csv AFTER `git commit`, leaving the
+    tree dirty after every 'successful' step — which tripped the next run's
+    dirty-tree guard and forced bookkeeping-only commits (the stray 'Step1'
+    commit containing nothing but the routing CSV).
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    # Success path: the "done" routing call precedes the step commit.
+    done_call = text.index('log_routing "step-${STEP_PAD}" "true"')
+    step_commit = text.index('git commit -m "Step $NEXT: complete"')
+    assert done_call < step_commit, (
+        "success-path log_routing must run before the step commit"
+    )
+    # Both halt paths and the success path must stage the routing CSV.
+    assert text.count('git add -- "$ROUTING_LOG"') >= 3, (
+        "the routing CSV must be staged into the step/halt commit on all three "
+        "bookkeeping paths"
+    )
+    # No halt commit may be followed by its routing call: every 'halted' routing
+    # call must appear shortly before the halt commit in its block.
+    halt_commits = list(re.finditer(re.escape('git commit -m "Step $NEXT: HALT'), text))
+    assert len(halt_commits) == 2, "expected the inner and outer halt commit paths"
+    for match in halt_commits:
+        preceding = text[max(0, match.start() - 600):match.start()]
+        assert 'log_routing "step-${STEP_PAD}" "false" "0" "halted"' in preceding, (
+            "halt-path log_routing must run before the halt commit"
+        )
+
+
+def test_dirty_tree_guards_ignore_step_logs() -> None:
+    """The dirty-tree and recovery-dirty checks must exclude plans/*.log.
+
+    phase2.sh writes preflight WARNs into $LOG_FILE before the dirty-tree
+    check. If .gitignore loses its plans/*.log rule (Aider corrupted it in the
+    0609 run), every invocation creates an untracked log and then blocks
+    itself on it. Using _COMMIT_EXCLUDES (which carries ':!plans/*.log')
+    instead of _BUILD_EXCLUDES breaks that self-blocking loop; the logs are
+    excluded from the step commit anyway.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "DIRTY=$(git status --porcelain -- '.' \"${_COMMIT_EXCLUDES[@]}\"" in text, (
+        "startup dirty-tree guard must use _COMMIT_EXCLUDES so step logs never block it"
+    )
+    assert "_RECOVERY_DIRTY=$(git status --porcelain -- '.' \"${_COMMIT_EXCLUDES[@]}\"" in text, (
+        "recovery dirty check must use _COMMIT_EXCLUDES so this run's own log "
+        "does not make every recovery look dirty"
+    )
+
+
+def test_gitignore_required_entries_guard_present() -> None:
+    """phase2.sh must repair required .gitignore entries after the Aider run.
+
+    The 0609 run saw Aider truncate .gitignore to a partial line; losing
+    'plans/*.log' made the executor's own step logs untracked and wedged all
+    subsequent runs on the dirty-tree guard.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    m = re.search(r"^_GITIGNORE_REQUIRED=\((.*)\)$", text, flags=re.MULTILINE)
+    assert m, "phase2.sh missing _GITIGNORE_REQUIRED definition"
+    for entry in (".aider*", "!.aider.conf.yml", "!.aiderignore", "plans/*.log"):
+        assert f"'{entry}'" in m.group(1), (
+            f"required .gitignore entry missing from repair guard: {entry}"
+        )
+    assert 'grep -qxF -- "$_gi" .gitignore' in text, (
+        "repair guard must whole-line literal-match each required entry"
+    )
+
+
+def test_strict_model_match_gate_is_available() -> None:
+    """The served/configured model mismatch must offer an opt-in hard gate.
+
+    Both 0609 failures started under a silently-tolerated model mismatch
+    (configured exl3-6.0bpw label vs served exl2 weights). The default stays a
+    warning (server id formatting varies), but PHASE2_STRICT_MODEL_MATCH must
+    turn the mismatch into an abort for users who want enforcement.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "PHASE2_STRICT_MODEL_MATCH" in text, (
+        "phase2.sh missing the PHASE2_STRICT_MODEL_MATCH opt-in gate"
+    )
+    assert "aborting on model mismatch" in text, (
+        "strict gate must abort with a clear error when armed"
+    )
+
+
+# ----- python verify.sh helper --------------------------------------------------
+
+PY_HELPER_PATH = REPO_ROOT / "templates" / "stacks" / "python" / "PHASE1_VERIFY.md"
+
+
+def test_python_verify_helper_fails_hard_on_missing_venv() -> None:
+    """The Python helper must make a missing .venv a non-zero failure.
+
+    The 0609 generated verify.sh exited 0 when .venv was absent, so phase2.sh
+    recorded Step 1 DONE without running a single test. The helper must ship a
+    require_venv gate that exits 1 with remediation, and must say the exit-0
+    allowance is for a missing sentinel only.
+    """
+    text = PY_HELPER_PATH.read_text(encoding="utf-8")
+    assert "require_venv()" in text, "helper missing the require_venv gate"
+    assert 'if [ ! -f ".venv/bin/activate" ]' in text
+    assert "exit 1" in text, "missing .venv must exit non-zero"
+    assert "python3 -m venv .venv" in text, "remediation command must be printed"
+    assert "non-zero" in text and "sentinel" in text, (
+        "helper must scope the exit-0 allowance to a missing sentinel only"
+    )

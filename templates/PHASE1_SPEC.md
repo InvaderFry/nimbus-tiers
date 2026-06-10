@@ -275,6 +275,13 @@ A Bash script that:
 
   Use whichever sentinel is appropriate for this project. If the expected
   sentinel does not exist, print a message that names it and exit 0.
+- **Missing-toolchain rule:** the exit-0 allowance above applies ONLY to a
+  missing sentinel (project not yet initialized). Once the sentinel exists,
+  a missing or broken environment that the gate needs — e.g. a Python
+  project whose `.venv` is absent, or a missing JDK/runtime — is an
+  infrastructure failure: print a clear remediation message and exit
+  **non-zero**. A gate that exits 0 because its test runner is unavailable
+  lets `phase2.sh` record steps DONE without ever running the tests.
 - If initialized, runs the automated build/lint/test gate.
 - The gate must **compile the whole application** (not just the changed file)
   and, for framework apps, exercise at least one full-context startup test

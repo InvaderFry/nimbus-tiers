@@ -594,7 +594,7 @@ Also produce:
 2. Launch Aider with all three phase files in read-only context:
 
 ```bash
-aider --model openai/Qwen2.5-Coder-14B-Instruct-exl2 \
+aider --model openai/Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw \
       --openai-api-base http://localhost:5000/v1 \
       --openai-api-key notneeded \
       --read PLAN.md --read TESTS.md --read CONTEXT.md
@@ -622,7 +622,7 @@ Do not modify files not listed in that step.
 /model groq/llama-3.3-70b-versatile
 
 # After successful step, swap back
-/model openai/Qwen2.5-Coder-14B-Instruct-exl2
+/model openai/Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw
 ```
 
 **Auto-commit modes:**
@@ -858,7 +858,7 @@ Create `~/.aider.conf.yml` in WSL. The exact YAML format and supported keys can 
 
 ```yaml
 # Default to local model via TabbyAPI's OpenAI-compatible endpoint
-model: openai/Qwen2.5-Coder-14B-Instruct-exl2
+model: openai/Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
@@ -901,7 +901,7 @@ aider --read PLAN.md --read TESTS.md --read CONTEXT.md
 /model groq/llama-3.3-70b-versatile
 
 # Switch back to local
-/model openai/Qwen2.5-Coder-14B-Instruct-exl2
+/model openai/Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw
 
 # Add a file to context (makes it editable)
 /add src/new_feature.py

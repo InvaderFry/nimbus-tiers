@@ -147,3 +147,20 @@ def test_verify_sh_requires_exit_propagation_and_static_guards() -> None:
     )
     for token in ("PIPESTATUS", "exit status", "Static defect guards"):
         assert token in section, f"§4 verify.sh section missing gate-hardening token: {token}"
+
+
+def test_verify_sh_missing_toolchain_must_fail() -> None:
+    """§4 must scope the uninitialized exit-0 allowance to the sentinel only.
+
+    The 0609 Python runs shipped a verify.sh that exited 0 when .venv was
+    missing, so phase2.sh recorded a step DONE without running any tests. The
+    spec must say: missing sentinel → exit 0; missing toolchain/environment on
+    an initialized project → non-zero infrastructure failure.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 4. verify.sh",
+        "### 5. plans/stepNN.md",
+    )
+    for token in ("Missing-toolchain rule", ".venv", "infrastructure failure", "non-zero"):
+        assert token in section, f"§4 verify.sh section missing toolchain-rule token: {token}"
