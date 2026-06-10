@@ -154,12 +154,39 @@ Exit codes:
 
 Notes:
 
+- **Each Aider invocation runs under a 15-minute wall-clock timeout.** A step that hits it is killed (hard-kill 30s later if needed) and NOT recorded — re-run after fixing the cause; a step that legitimately needs 15 minutes of generation is doing too much and should be split.
+- **Preflight enforces a minimum served context window.** When the executor is a local TabbyAPI server, `phase2.sh` reads `max_seq_len` from `/v1/model` and aborts if it is below 16384 — a starved context window truncates Aider's prompt mid-file and is the root cause of most degenerate-loop and SEARCH/REPLACE failures. Override the floor with `PHASE2_MIN_CTX=<n>` (or `0` to disable). Recommended server settings live in `docs/tabbyapi-nimbus-example.yml`.
 - `CompletedSteps.md` is committed by `phase2.sh` on every successful step (it is not gitignored). This keeps branch state self-describing.
 - `CompletedSteps.md` is written by `phase2.sh` after Aider exits, not by Aider itself. This is intentional — delegating bookkeeping to Aider is fragile because Aider can crash after verification passes but before it finishes its summarization step, leaving the step recorded as incomplete.
 - `--yes` auto-confirms file prompts so the run never hangs.
 - Each successful run produces exactly one commit.
 
+#### What to expect from the local executor, by stack
+
+- **Python / Node:** most steps succeed locally on a well-served 14B
+  (32K context, Q8 KV cache — see `docs/tabbyapi-nimbus-example.yml`).
+- **Java Spring Boot (Maven/Gradle):** the hardest workload for a 14B-class
+  model — each step's output is 3–5× more verbose than the Python equivalent,
+  and the framework has known traps (HTTP-client mixing, `@SpringBootTest` vs
+  test slices, package-path bugs; `PHASE1_SPEC.md` carries guardrails for
+  each). Expect a meaningful fraction of steps to need escalation: set
+  `PHASE2_FALLBACK_MODEL` (below) so failed steps retry on Groq automatically.
+  Escalations on Java are normal operation, not a sign the pipeline is broken —
+  but the >30% rule at the end of this section still applies: above that,
+  invest in more specific step files, not a bigger model.
+
 #### When a step keeps failing
+
+**Automatic fallback (recommended):** export `PHASE2_FALLBACK_MODEL` (and the
+matching API key) and `phase2.sh` escalates by itself — after a step fails once
+on the local model, the next run re-invokes Aider with the fallback model and
+logs the run as tier 2 (`escalated_from=local`) in `logs/ai-routing.csv`:
+
+```bash
+export GROQ_API_KEY=gsk_...
+export PHASE2_FALLBACK_MODEL=groq/llama-3.3-70b-versatile
+./phase2.sh   # first failure stays local; the retry runs on Groq
+```
 
 If `phase2.sh` exits 1 on the same step twice in a row, do not just keep retrying — the step is likely underspecified or has a missing upstream artifact. Use this fallback ladder:
 
@@ -244,6 +271,7 @@ fixing, say APPROVED and provide a one-paragraph commit-message summary.
 | `CompletedSteps.md` | Step completion log written and committed by `phase2.sh`. Tracks which steps are DONE. Committed (not gitignored) so branch state is self-describing. |
 | `logs/ai-routing.csv` | Per-step routing log appended by `phase2.sh`: date, step, tier, outcome, approximate diff line count. |
 | `docs/architecture.md` | Full architecture reference. |
+| `docs/tabbyapi-nimbus-example.yml` | Reference TabbyAPI server settings (model, `max_seq_len`, KV cache mode) for the local executor. |
 | `PHASE1_VERIFY_HELPER.md` | Stack-specific `verify.sh` quiet-log snippet (selected at scaffold time). Referenced by `PHASE1_SPEC.md` §4. |
 | `.aider.conf.yml` | Aider config (Path C defaults: local TabbyAPI, `map-tokens: 0`, `edit-format: diff`). `phase2.sh` overrides to `--edit-format whole` when every target is whole-safe (new, or an existing file ≤ ~120 lines / `PHASE2_WHOLE_FILE_MAX_LINES`); a single oversized existing target keeps the step on `diff`. |
 | `.aiderignore` | Files Aider must not read (secrets, env, credentials). |

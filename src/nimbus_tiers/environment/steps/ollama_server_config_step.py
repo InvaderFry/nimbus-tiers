@@ -17,6 +17,8 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_rc_export,
+    default_rc_path,
     read_bashrc_value,
 )
 
@@ -47,12 +49,6 @@ Setting them in WSL has no effect on the Windows Ollama process.
 """
 
 
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
-
-
 class OllamaServerConfigStep(SetupStep):
     name = "ollama-server-config"
     description = "Ollama server performance settings (flash attention, KV cache type)"
@@ -62,12 +58,18 @@ class OllamaServerConfigStep(SetupStep):
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
         rc_reader: Callable[[str], str | None] | None = None,
+        rc_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._rc_path = rc_path or default_rc_path()
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
-        self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
-        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
+        self._rc_writer = rc_writer if rc_writer is not None else (
+            lambda var, value: append_rc_export(var, value, self._rc_path)
+        )
+        self._rc_reader = rc_reader if rc_reader is not None else (
+            lambda var: read_bashrc_value(var, self._rc_path)
+        )
 
     def _is_remote(self) -> bool:
         return bool(self._env_lookup(OLLAMA_HOST_VAR))
@@ -105,10 +107,10 @@ class OllamaServerConfigStep(SetupStep):
         if not to_write:
             return InstallResult(
                 InstallStatus.INSTALLED,
-                "settings already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                f"settings already in {self._rc_path}; run `source {self._rc_path}` to apply",
             )
         lines = "\n".join(f"    export {k}={v}" for k, v in to_write.items())
-        prompt = f"Append these Ollama performance settings to ~/.bashrc?\n{lines}"
+        prompt = f"Append these Ollama performance settings to {self._rc_path}?\n{lines}"
         if not self._ask(prompt, assume_yes):
             return InstallResult(InstallStatus.SKIPPED, "user declined")
         try:
@@ -118,7 +120,8 @@ class OllamaServerConfigStep(SetupStep):
             return InstallResult(InstallStatus.FAILED, str(exc))
         return InstallResult(
             InstallStatus.INSTALLED,
-            "settings appended to ~/.bashrc; restart your shell or `source ~/.bashrc` to apply",
+            f"settings appended to {self._rc_path}; "
+            f"restart your shell or `source {self._rc_path}` to apply",
         )
 
 

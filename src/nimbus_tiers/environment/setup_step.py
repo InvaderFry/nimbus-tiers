@@ -55,9 +55,28 @@ Logger = Callable[[str], None]
 Prompter = Callable[[str], "str | None"]
 
 
-def read_bashrc_value(var: str, rc_path: str = "~/.bashrc") -> str | None:
+def default_rc_path() -> str:
+    """Return the rc file matching the user's login shell ($SHELL).
+
+    zsh users get ~/.zshrc; bash, unknown, or unset shells fall back to
+    ~/.bashrc. Resolved at call time so tests can monkeypatch SHELL.
+    """
+    shell = os.path.basename(os.environ.get("SHELL", ""))
+    if shell == "zsh":
+        return "~/.zshrc"
+    return "~/.bashrc"
+
+
+def append_rc_export(var: str, value: str, rc_path: str | None = None) -> None:
+    """Append `export VAR="value"` to *rc_path* (default: the user's shell rc)."""
+    path = os.path.expanduser(rc_path or default_rc_path())
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f'export {var}="{value}"\n')
+
+
+def read_bashrc_value(var: str, rc_path: str | None = None) -> str | None:
     """Return the last exported value of *var* found in *rc_path*, or None."""
-    path = os.path.expanduser(rc_path)
+    path = os.path.expanduser(rc_path or default_rc_path())
     try:
         with open(path, encoding="utf-8") as fh:
             content = fh.read()
@@ -133,17 +152,20 @@ class SetupStep(ABC):
     def _which(self, command: str) -> str | None:
         return shutil.which(command)
 
-    def _capture(self, *args: str) -> tuple[int, str, str]:
+    def _capture(
+        self, *args: str, timeout: float | None = None
+    ) -> tuple[int, str, str]:
         """Run a command, capture output, never raise. Returns (rc, stdout, stderr)."""
+        kwargs: dict = dict(check=False, capture_output=True, text=True)
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         try:
-            proc = self._run(
-                list(args),
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            proc = self._run(list(args), **kwargs)
         except FileNotFoundError as exc:
             return 127, "", str(exc)
+        except subprocess.TimeoutExpired:
+            # 124 mirrors GNU timeout(1) semantics, same as phase2.sh.
+            return 124, "", f"timed out after {timeout}s"
         return proc.returncode, proc.stdout or "", proc.stderr or ""
 
     def _prompt(self, label: str) -> str | None:
@@ -163,7 +185,7 @@ class EnvVarStep(SetupStep):
         self,
         var_name: str,
         expected_value: str,
-        rc_path: str = "~/.bashrc",
+        rc_path: str | None = None,
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
         **kwargs,
@@ -171,7 +193,7 @@ class EnvVarStep(SetupStep):
         super().__init__(**kwargs)
         self.var_name = var_name
         self.expected_value = expected_value
-        self.rc_path = rc_path
+        self.rc_path = rc_path or default_rc_path()
         self.name = f"env:{var_name}"
         self.description = f"Environment variable {var_name}={expected_value}"
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
@@ -222,5 +244,7 @@ __all__ = [
     "default_prompter",
     "default_runner",
     "default_logger",
+    "default_rc_path",
+    "append_rc_export",
     "read_bashrc_value",
 ]

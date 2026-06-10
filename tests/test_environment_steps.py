@@ -23,6 +23,7 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    default_rc_path,
 )
 from nimbus_tiers.environment.steps import (
     AiderStep,
@@ -34,6 +35,7 @@ from nimbus_tiers.environment.steps import (
     PythonStep,
     TabbyApiStep,
 )
+from nimbus_tiers.environment.steps.ollama_step import OLLAMA_INSTALL_TIMEOUT_S
 
 
 def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -145,6 +147,31 @@ def test_ollama_install_runs_official_oneliner_when_i_chosen() -> None:
     assert "ollama.com/install.sh" in invoked[2]
 
 
+def test_ollama_install_passes_timeout_to_runner() -> None:
+    runner = MagicMock(return_value=_proc(stdout="ok"))
+    step = OllamaStep(
+        runner=runner,
+        prompter=lambda _p: "i",
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    step.install()
+    assert runner.call_args.kwargs.get("timeout") == OLLAMA_INSTALL_TIMEOUT_S
+
+
+def test_ollama_install_fails_cleanly_when_installer_times_out() -> None:
+    runner = MagicMock(side_effect=subprocess.TimeoutExpired("sh", OLLAMA_INSTALL_TIMEOUT_S))
+    step = OllamaStep(
+        runner=runner,
+        prompter=lambda _p: "i",
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.FAILED
+    assert "timed out" in result.detail
+
+
 def test_ollama_install_assume_yes_runs_local_install() -> None:
     runner = MagicMock(return_value=_proc(stdout="ok"))
     step = OllamaStep(runner=runner, logger=lambda _m: None)
@@ -196,6 +223,7 @@ def test_ollama_install_remote_uses_bashrc_value_when_confirmed() -> None:
         prompter=lambda _p: (_ for _ in ()).throw(AssertionError("should not prompt for URL")),
         confirm=lambda _p: True,
         logger=lambda _m: None,
+        rc_path="~/.bashrc",
         rc_reader=lambda _v: "http://192.168.1.100:11434",
     )
     # Simulate user choosing 'r' then confirming the found URL
@@ -295,6 +323,7 @@ def test_tabbyapi_install_remote_uses_bashrc_value_when_confirmed() -> None:
     step = TabbyApiStep(
         prompter=lambda _p: next(prompts),
         confirm=lambda _p: True,
+        rc_path="~/.bashrc",
         logger=lambda _m: None,
         rc_reader=lambda _v: "http://192.168.1.100:5000",
     )
@@ -411,6 +440,7 @@ def test_ollama_server_config_install_returns_installed_when_vars_already_in_bas
         env_lookup=lambda _k: None,
         rc_reader=bashrc.get,
         logger=lambda _m: None,
+        rc_path="~/.bashrc",
     )
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
@@ -483,6 +513,7 @@ def test_groq_install_uses_bashrc_key_when_confirmed() -> None:
         confirm=lambda _p: True,
         logger=lambda _m: None,
         rc_reader=lambda _v: "gsk_existingkey123",
+        rc_path="~/.bashrc",
     )
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
@@ -688,3 +719,23 @@ def test_environment_report_render_includes_all_step_names() -> None:
     rendered = report.render()
     assert "first" in rendered
     assert "second" in rendered
+
+
+# ----- default_rc_path ------------------------------------------------------
+
+
+def test_default_rc_path_zsh(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHELL", "/usr/bin/zsh")
+    assert default_rc_path() == "~/.zshrc"
+
+
+def test_default_rc_path_bash(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SHELL", "/bin/bash")
+    assert default_rc_path() == "~/.bashrc"
+
+
+def test_default_rc_path_falls_back_to_bashrc_when_shell_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SHELL", raising=False)
+    assert default_rc_path() == "~/.bashrc"

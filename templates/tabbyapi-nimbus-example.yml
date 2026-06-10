@@ -1,0 +1,36 @@
+# TabbyAPI config.yml — reference settings for the nimbus Phase 2 executor.
+#
+# Copy the relevant keys into the config.yml of your TabbyAPI checkout (the
+# file lives next to start.py). These are the serving-side settings that
+# determine whether a local 14B coder model executes steps reliably on a
+# 16GB GPU (reference hardware: RTX 5080). Most "the model hallucinates /
+# loops / botches SEARCH-REPLACE blocks" failures are caused here, not by
+# the model choice.
+
+network:
+  host: 127.0.0.1
+  port: 5000          # .aider.conf.yml points at http://localhost:5000/v1
+
+model:
+  # Directory containing your downloaded quantized models.
+  model_dir: models
+
+  # 14B at exl3 6bpw is ~11GB of weights — it fits 16GB WITH headroom for a
+  # real context window. A 32B dense quant "fits" only at <=3.5bpw with a
+  # starved context, which trades everything that matters for parameter
+  # count. Prefer the 14B.
+  model_name: Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw
+
+  # INPUT budget per request (system prompt + step file + CONTEXT.md +
+  # target files). Below ~16K, Aider's prompt gets truncated mid-file and
+  # the model completes garbage — the root cause of degenerate repetition
+  # loops. phase2.sh refuses to run below 16384 (override: PHASE2_MIN_CTX).
+  max_seq_len: 32768
+
+  # KV cache quantization. Q8 halves cache VRAM with negligible quality
+  # loss; Q4 and below measurably degrades code generation and is a known
+  # trigger for repetition loops. Use Q8 or FP16, never lower.
+  cache_mode: Q8
+
+  # Total KV cache allocation in tokens; >= max_seq_len.
+  cache_size: 32768

@@ -2,6 +2,13 @@
 
 **A four-tier design for routing coding tasks across local models, free cloud APIs, and frontier subscriptions to maximize throughput while staying within rate limits.**
 
+> **Current default executor:** Qwen2.5-Coder-14B (exl3 6bpw) via TabbyAPI. Older
+> sections of this doc still name Qwen3-32B as the Tier 1 model; on the 16GB
+> reference GPU the 32B is no longer recommended for Phase 2 — it only fits at a
+> low bpw with a starved context window, which causes the degenerate-loop
+> failures `phase2.sh` guards against. The template `.aider.conf.yml` and
+> `docs/tabbyapi-nimbus-example.yml` reflect the 14B default.
+
 ---
 
 ## Table of Contents
@@ -67,7 +74,7 @@ A four-tier intelligence routing system:
 └─────────────────────────────────────────────────────────────┘
          ↑ Escalate when local quality insufficient
 ┌─────────────────────────────────────────────────────────────┐
-│  Tier 1: Local Models (Qwen3-32B, Qwen2.5-Coder 14B)    │
+│  Tier 1: Local Models (Qwen2.5-Coder-14B — default)         │
 │  Use for: Bulk execution against clear plans                │
 │  Cost: Free, unlimited, private                             │
 └─────────────────────────────────────────────────────────────┘
@@ -152,7 +159,7 @@ The 16GB VRAM on this build is workable for 14B–24B quantized models. The 64GB
 │   PLANNING    │     │   EXECUTION   │     │    REVIEW     │
 │               │     │               │     │               │
 │  Claude Code  │     │  Local Aider  │     │  Claude Code  │
-│  Opus         │     │  Qwen3-32B │     │  Opus         │
+│  Opus         │     │  Qwen-Coder14B│     │  Opus         │
 │  Plan Mode    │     │  Step-by-step │     │  /review      │
 └───────────────┘     └───────┬───────┘     └───────────────┘
                               │
@@ -182,7 +189,7 @@ The three markdown files — PLAN.md, TESTS.md, and CONTEXT.md — form the comp
 | Phase | Primary Tool | Model | Why |
 |---|---|---|---|
 | Planning | Claude Code | Opus (frontier) | Frontier judgment; one-time cost per feature |
-| Execution | Aider (WSL) | Qwen3-32B (local) | Unlimited volume, no quota burn |
+| Execution | Aider (WSL) | Qwen2.5-Coder-14B (local) | Unlimited volume, no quota burn |
 | Fallback Execution | Aider (WSL) | Groq llama-3.3-70b | Better quality when local stalls |
 | Debug Escalation | ChatGPT | GPT frontier | Strong at "what's wrong here" |
 | Review | Claude Code | Opus (frontier) | Frontier review catches subtle issues |
@@ -222,8 +229,8 @@ The three markdown files — PLAN.md, TESTS.md, and CONTEXT.md — form the comp
 
 | Model | Format | VRAM | Speed | Best For |
 |---|---|---|---|---|
-| Qwen3-32B | EXL3 | ~18GB | ~35 tok/s | Agentic coding, multi-file work | *(replaced Devstral-Small-24B as the default executor)* |
-| Qwen2.5-Coder 14B | EXL3 6.0bpw | ~11GB | ~70 tok/s | Single-file work, boilerplate |
+| Qwen2.5-Coder 14B *(default executor)* | EXL3 6.0bpw | ~11GB | ~70 tok/s | Phase 2 execution: fits 16GB with headroom for a 32K context |
+| Qwen3-32B | EXL3 | ~18GB | ~35 tok/s | NOT recommended on 16GB: needs a starved context/low bpw to fit |
 | Qwen3 14B Instruct | EXL3 6.0bpw | ~11GB | ~75 tok/s | General reasoning, chat |
 
 > Speed figures are observed on the reference hardware at the quantization levels listed. Your results will vary.
