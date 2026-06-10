@@ -12,18 +12,16 @@ from nimbus_tiers.environment.setup_step import (
     InstallStatus,
     Prompter,
     SetupStep,
+    append_rc_export,
+    default_rc_path,
     read_bashrc_value,
 )
 
 
 OLLAMA_INSTALL_CMD = "curl -fsSL https://ollama.com/install.sh | sh"
 OLLAMA_HOST_VAR = "OLLAMA_HOST"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
+# The installer downloads a multi-GB runtime; be generous, but never hang forever.
+OLLAMA_INSTALL_TIMEOUT_S = 600
 
 
 class OllamaStep(SetupStep):
@@ -35,12 +33,18 @@ class OllamaStep(SetupStep):
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
         rc_reader: Callable[[str], str | None] | None = None,
+        rc_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._rc_path = rc_path or default_rc_path()
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
-        self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
-        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
+        self._rc_writer = rc_writer if rc_writer is not None else (
+            lambda var, value: append_rc_export(var, value, self._rc_path)
+        )
+        self._rc_reader = rc_reader if rc_reader is not None else (
+            lambda var: read_bashrc_value(var, self._rc_path)
+        )
 
     def check(self) -> CheckResult:
         host = self._env_lookup(OLLAMA_HOST_VAR)
@@ -77,23 +81,24 @@ class OllamaStep(SetupStep):
     def _configure_remote(self) -> InstallResult:
         existing = self._rc_reader(OLLAMA_HOST_VAR)
         if existing:
-            self._log(f"Found {OLLAMA_HOST_VAR}={existing!r} in ~/.bashrc.")
+            self._log(f"Found {OLLAMA_HOST_VAR}={existing!r} in {self._rc_path}.")
             if self._confirm(f"Is {existing!r} the correct Ollama endpoint?"):
                 return InstallResult(
                     InstallStatus.INSTALLED,
-                    f"{OLLAMA_HOST_VAR} already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                    f"{OLLAMA_HOST_VAR} already in {self._rc_path}; "
+                    f"run `source {self._rc_path}` to apply",
                 )
         url = self._prompt("Ollama endpoint URL (e.g. http://192.168.1.100:11434)")
         if not url:
             return InstallResult(InstallStatus.SKIPPED, "no URL entered")
-        if self._confirm(f"Append export {OLLAMA_HOST_VAR}={url!r} to ~/.bashrc?"):
+        if self._confirm(f"Append export {OLLAMA_HOST_VAR}={url!r} to {self._rc_path}?"):
             try:
                 self._rc_writer(OLLAMA_HOST_VAR, url)
             except OSError as exc:
                 return InstallResult(InstallStatus.FAILED, str(exc))
             return InstallResult(
                 InstallStatus.INSTALLED,
-                f"{OLLAMA_HOST_VAR}={url} written to ~/.bashrc; restart your shell to apply",
+                f"{OLLAMA_HOST_VAR}={url} written to {self._rc_path}; restart your shell to apply",
             )
         return InstallResult(
             InstallStatus.SKIPPED,
@@ -108,7 +113,9 @@ class OllamaStep(SetupStep):
         )
         if not self._ask(prompt, assume_yes):
             return InstallResult(InstallStatus.SKIPPED, "user declined")
-        rc, stdout, stderr = self._capture("sh", "-c", OLLAMA_INSTALL_CMD)
+        rc, stdout, stderr = self._capture(
+            "sh", "-c", OLLAMA_INSTALL_CMD, timeout=OLLAMA_INSTALL_TIMEOUT_S
+        )
         if rc != 0:
             return InstallResult(
                 InstallStatus.FAILED,
@@ -117,4 +124,9 @@ class OllamaStep(SetupStep):
         return InstallResult(InstallStatus.INSTALLED, "Ollama installed locally")
 
 
-__all__ = ["OllamaStep", "OLLAMA_INSTALL_CMD", "OLLAMA_HOST_VAR"]
+__all__ = [
+    "OllamaStep",
+    "OLLAMA_INSTALL_CMD",
+    "OLLAMA_HOST_VAR",
+    "OLLAMA_INSTALL_TIMEOUT_S",
+]

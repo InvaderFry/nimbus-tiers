@@ -11,18 +11,14 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_rc_export,
+    default_rc_path,
     read_bashrc_value,
 )
 
 
 GROQ_API_KEY_VAR = "GROQ_API_KEY"
 GROQ_CONSOLE_URL = "https://console.groq.com/keys"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class GroqApiKeyStep(SetupStep):
@@ -34,12 +30,18 @@ class GroqApiKeyStep(SetupStep):
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
         rc_reader: Callable[[str], str | None] | None = None,
+        rc_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self._rc_path = rc_path or default_rc_path()
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
-        self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
-        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
+        self._rc_writer = rc_writer if rc_writer is not None else (
+            lambda var, value: append_rc_export(var, value, self._rc_path)
+        )
+        self._rc_reader = rc_reader if rc_reader is not None else (
+            lambda var: read_bashrc_value(var, self._rc_path)
+        )
 
     def check(self) -> CheckResult:
         key = self._env_lookup(GROQ_API_KEY_VAR)
@@ -61,31 +63,33 @@ class GroqApiKeyStep(SetupStep):
         if assume_yes:
             return InstallResult(
                 InstallStatus.MANUAL,
-                f"set {GROQ_API_KEY_VAR} in your shell or ~/.bashrc and re-run to verify",
+                f"set {GROQ_API_KEY_VAR} in your shell or {self._rc_path} and re-run to verify",
             )
 
         existing = self._rc_reader(GROQ_API_KEY_VAR)
         if existing:
             preview = existing[:8] + "..." if len(existing) > 8 else "***"
-            self._log(f"Found {GROQ_API_KEY_VAR}={preview} in ~/.bashrc.")
+            self._log(f"Found {GROQ_API_KEY_VAR}={preview} in {self._rc_path}.")
             if self._confirm("Is this the correct Groq API key?"):
                 return InstallResult(
                     InstallStatus.INSTALLED,
-                    f"{GROQ_API_KEY_VAR} already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                    f"{GROQ_API_KEY_VAR} already in {self._rc_path}; "
+                    f"run `source {self._rc_path}` to apply",
                 )
 
         key = self._prompt(f"Paste your Groq API key (or press Enter to skip)")
         if not key:
             return InstallResult(InstallStatus.SKIPPED, "no key entered")
 
-        if self._confirm(f"Append export {GROQ_API_KEY_VAR}=... to ~/.bashrc?"):
+        if self._confirm(f"Append export {GROQ_API_KEY_VAR}=... to {self._rc_path}?"):
             try:
                 self._rc_writer(GROQ_API_KEY_VAR, key)
             except OSError as exc:
                 return InstallResult(InstallStatus.FAILED, str(exc))
             return InstallResult(
                 InstallStatus.INSTALLED,
-                f"{GROQ_API_KEY_VAR} written to ~/.bashrc; restart your shell or `source ~/.bashrc` to apply",
+                f"{GROQ_API_KEY_VAR} written to {self._rc_path}; "
+                f"restart your shell or `source {self._rc_path}` to apply",
             )
 
         return InstallResult(

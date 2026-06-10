@@ -48,6 +48,7 @@ class FullHybridPath(SetupPath):
             ("plans/README.md", "plans/README.md"),
             ("logs/ai-routing.csv", "logs/ai-routing.csv"),
             ("docs/architecture.md", "docs/architecture.md"),
+            ("tabbyapi-nimbus-example.yml", "docs/tabbyapi-nimbus-example.yml"),
         ]
         return (
             [TemplateSpec(Path(src), Path(dest)) for src, dest in common]

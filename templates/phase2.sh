@@ -172,10 +172,19 @@ print(n)
 STEP_PAD=$(printf '%02d' "$NEXT")
 STEP_FILE="plans/step${STEP_PAD}.md"
 HALT_FILE="plans/halt-step${STEP_PAD}.md"
+# Failure marker for the optional automatic fallback (PHASE2_FALLBACK_MODEL):
+# written on model-failure exits, consumed at startup of the next run for the
+# same step, removed on success and on intentional halts. Lives in .git/ for
+# the same reasons as the WIP sentinel.
+FAIL_MARKER=".git/phase2-fail-step${STEP_PAD}"
 
 # --- ai-routing.csv helpers ---------------------------------------------------
 ROUTING_LOG="logs/ai-routing.csv"
 ROUTING_HEADER="date,repo,task_type,tier_used,model,escalated_from,tests_passed,diff_lines_approx,human_rework_minutes,outcome"
+# Routing metadata defaults; overridden by the fallback activation block below.
+_ROUTE_TIER=1
+_ROUTE_MODEL=local
+_ROUTE_ESCALATED_FROM=""
 log_routing() {
     # log_routing <task_type> <tests_passed:true|false> <diff_lines_approx> <outcome>
     local task_type="$1"
@@ -191,7 +200,7 @@ log_routing() {
         if [ ! -s "$ROUTING_LOG" ]; then
             echo "$ROUTING_HEADER" > "$ROUTING_LOG"
         fi
-        echo "${date},${repo_name},${task_type},1,local,,${tests_passed},${diff_lines},,${outcome}" >> "$ROUTING_LOG"
+        echo "${date},${repo_name},${task_type},${_ROUTE_TIER},${_ROUTE_MODEL},${_ROUTE_ESCALATED_FROM},${tests_passed},${diff_lines},,${outcome}" >> "$ROUTING_LOG"
     fi
 }
 
@@ -284,6 +293,12 @@ logf_err() {
     printf '%s\n' "$@" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+# Record that this step failed at the model (not by intentional halt), so the
+# next run can auto-escalate when PHASE2_FALLBACK_MODEL is set. Best-effort.
+_mark_step_failed() {
+    : > "$FAIL_MARKER" 2>/dev/null || true
+}
+
 # Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally
 # underspecified step. Note: aider does not expose a --max-reflections flag
 # in the version used here; the retry count is not configurable via CLI or
@@ -310,6 +325,26 @@ else
     TIMEOUT_CMD=()
 fi
 
+# ── Optional automatic fallback ───────────────────────────────────────────────
+# When PHASE2_FALLBACK_MODEL is set (e.g. groq/llama-3.3-70b-versatile) and the
+# previous run of THIS step failed at the model (fail marker present), this run
+# re-invokes Aider with the fallback model instead of the local default. One
+# local failure is required first — the fallback never preempts the local tier.
+# The fallback run is logged to logs/ai-routing.csv as tier 2, escalated_from
+# local. If the fallback run also fails, the marker is re-written and the next
+# run retries the fallback again; see NIMBUS_GUIDE.md "When a step keeps
+# failing" for when to stop and go back to Phase 1.
+FALLBACK_ACTIVE=false
+MODEL_OVERRIDE_ARGS=()
+if [ -n "${PHASE2_FALLBACK_MODEL:-}" ] && [ -f "$FAIL_MARKER" ]; then
+    FALLBACK_ACTIVE=true
+    MODEL_OVERRIDE_ARGS=(--model "$PHASE2_FALLBACK_MODEL")
+    _ROUTE_TIER=2
+    _ROUTE_MODEL="$PHASE2_FALLBACK_MODEL"
+    _ROUTE_ESCALATED_FROM=local
+    logf "==> Step ${NEXT} previously failed locally — retrying with fallback model ${PHASE2_FALLBACK_MODEL} (PHASE2_FALLBACK_MODEL)."
+fi
+
 # ── Preflight: fail fast if the model endpoint / API key is unavailable ───────
 # Derive model from env first, then from .aider.conf.yml so the check works
 # whether the user sets AIDER_MODEL or relies on the config file.
@@ -324,6 +359,9 @@ _read_aider_conf_scalar() {
 
 _PREFLIGHT_MODEL="${AIDER_MODEL:-}"
 [ -z "$_PREFLIGHT_MODEL" ] && _PREFLIGHT_MODEL=$(_read_aider_conf_scalar model)
+# A fallback run talks to the fallback provider, not the local server — point
+# the preflight at the model actually used this run.
+[ "$FALLBACK_ACTIVE" = true ] && _PREFLIGHT_MODEL="$PHASE2_FALLBACK_MODEL"
 
 if [ -n "$_PREFLIGHT_MODEL" ]; then
     _PREFLIGHT_API_KEY="${OPENAI_API_KEY:-}"
@@ -387,11 +425,64 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
                         "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit" \
                         "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
                 fi
+                # Context-length floor. The single most common root cause of
+                # degenerate repetition loops and phantom SEARCH/REPLACE blocks on
+                # local models is a server-side max_seq_len too small for Aider's
+                # prompt (system prompt + step file + CONTEXT.md + target files):
+                # the prompt gets truncated mid-file and the model completes
+                # garbage. TabbyAPI exposes the loaded model card at /model
+                # (singular) with max_seq_len under `parameters`; other
+                # OpenAI-compatible servers 404 there, in which case the check is
+                # skipped. Set PHASE2_MIN_CTX=<n> to change the floor, or 0 to
+                # disable the check entirely.
+                _MIN_CTX="${PHASE2_MIN_CTX:-16384}"
+                case "$_MIN_CTX" in
+                    ''|*[!0-9]*)
+                        logf_err "==> WARN: PHASE2_MIN_CTX='${_MIN_CTX}' is not a non-negative integer; using default 16384."
+                        _MIN_CTX=16384
+                        ;;
+                esac
+                if [ "$_MIN_CTX" -gt 0 ]; then
+                    set +e
+                    _MODEL_CARD=$(curl -sf --max-time 5 "${_PREFLIGHT_BASE_URL%/}/model" \
+                        "${_AUTH_HEADER[@]}" 2>/dev/null)
+                    _CARD_RC=$?
+                    set -e
+                    if [ "$_CARD_RC" -eq 0 ] && [ -n "$_MODEL_CARD" ]; then
+                        set +e
+                        _MAX_SEQ_LEN=$(printf '%s' "$_MODEL_CARD" \
+                            | grep -oE '"max_seq_len"[[:space:]]*:[[:space:]]*[0-9]+' \
+                            | head -n1 | tr -cd '0-9')
+                        set -e
+                        if [ -n "$_MAX_SEQ_LEN" ]; then
+                            logf "==> Served context length (max_seq_len): ${_MAX_SEQ_LEN}"
+                            if [ "$_MAX_SEQ_LEN" -lt "$_MIN_CTX" ]; then
+                                logf_err "==> ERROR: served max_seq_len (${_MAX_SEQ_LEN}) is below the required floor (${_MIN_CTX})." \
+                                    "    A context window this small truncates Aider's prompt mid-file — the known" \
+                                    "    root cause of degenerate repetition loops and SEARCH/REPLACE failures on" \
+                                    "    local models. Fix the inference host's TabbyAPI config.yml: raise" \
+                                    "    max_seq_len (16384–32768 for Qwen2.5-Coder-14B on a 16GB GPU) and use" \
+                                    "    cache_mode Q8 or FP16 — see docs/tabbyapi-nimbus-example.yml in this repo." \
+                                    "    Override the floor with PHASE2_MIN_CTX=<n>, or PHASE2_MIN_CTX=0 to skip" \
+                                    "    this check. Aborting."
+                                exit 1
+                            fi
+                        fi
+                    else
+                        logf "==> Note: server does not expose /v1/model (not TabbyAPI?) — skipping context-length check."
+                    fi
+                fi
             fi
             ;;
         anthropic/*|claude-*)
             if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
                 echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires ANTHROPIC_API_KEY to be set. Aborting."
+                exit 1
+            fi
+            ;;
+        groq/*)
+            if [ -z "${GROQ_API_KEY:-}" ]; then
+                echo "==> ERROR: model '$_PREFLIGHT_MODEL' requires GROQ_API_KEY to be set. Aborting."
                 exit 1
             fi
             ;;
@@ -724,6 +815,7 @@ if [ "$SKIP_AIDER" = false ]; then
     # ${arr[@]+"${arr[@]}"} avoids tripping `set -u` on empty arrays under bash < 4.4.
     (
       ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} aider \
+        ${MODEL_OVERRIDE_ARGS[@]+"${MODEL_OVERRIDE_ARGS[@]}"} \
         --no-auto-commits \
         --no-show-model-warnings \
         --map-tokens 0 \
@@ -802,6 +894,7 @@ if [ "$SKIP_AIDER" = false ]; then
              "    The local model looped emitting identical lines; aborted live to spare the 15-minute timeout window." \
              "    This is a model/cache QUALITY failure. Inspect $LOG_FILE. If repetition_penalty/DRY are already on and it still loops, the usual culprit is a low-bit quantized KV cache (cache_mode 2/3-bit) — move to 8,8 or FP16, disable reasoning/thinking for execution, or use a stronger/coder model. Splitting the step is only a stopgap."
         _cleanup_empty_placeholders
+        _mark_step_failed
         rm -f "$WIP_FILE"
         exit 1
     fi
@@ -810,12 +903,14 @@ if [ "$SKIP_AIDER" = false ]; then
     if { [ "$AIDER_EXIT" -eq 124 ] || [ "$AIDER_EXIT" -eq 137 ]; } && [ "${#TIMEOUT_CMD[@]}" -gt 0 ]; then
         logf "==> Aider hit the 15-minute timeout — step $NEXT NOT recorded. Inspect $LOG_FILE."
         _cleanup_empty_placeholders
+        _mark_step_failed
         exit 1
     fi
 
     if [ "$AIDER_EXIT" -ne 0 ]; then
         logf "==> Aider exited $AIDER_EXIT — step $NEXT NOT recorded."
         _cleanup_empty_placeholders
+        _mark_step_failed
         exit "$AIDER_EXIT"
     fi
 
@@ -841,6 +936,7 @@ if [ "$SKIP_AIDER" = false ]; then
                  "    The prompt (CONTEXT.md + step file + target files) was too large to fit." \
                  "    Inspect $LOG_FILE. Reduce CONTEXT.md, shorten this step's 'Files to change' list, or raise max_seq_len/cache_size on the inference server."
             _cleanup_empty_placeholders
+            _mark_step_failed
             rm -f "$WIP_FILE"
             exit 1
         fi
@@ -858,6 +954,7 @@ if [ "$SKIP_AIDER" = false ]; then
                      "    Inspect $LOG_FILE. Raise the server max_tokens cap and/or split this step so it generates fewer/smaller files per run. Input/CONTEXT.md size is usually NOT the issue here."
             fi
             _cleanup_empty_placeholders
+            _mark_step_failed
             rm -f "$WIP_FILE"
             exit 1
         fi
@@ -893,6 +990,7 @@ if [ "$SKIP_AIDER" = false ]; then
                  "    Inspect $LOG_FILE. Consider splitting this step or using a stronger model." \
                  "    (The live watchdog normally catches this sooner; this backstop fires when Aider buffered the output and still exited 0.)"
             _cleanup_empty_placeholders
+            _mark_step_failed
             rm -f "$WIP_FILE"
             exit 1
         fi
@@ -935,7 +1033,7 @@ if [ "$SKIP_AIDER" = false ]; then
         git checkout -- . 2>/dev/null || true         # discard tracked-file edits
         git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
         log_routing "step-${STEP_PAD}" "false" "0" "halted"
-        rm -f "$WIP_FILE"
+        rm -f "$WIP_FILE" "$FAIL_MARKER"
         exit 2
     fi
 
@@ -950,6 +1048,7 @@ if [ "$SKIP_AIDER" = false ]; then
     # zero-edit run reach verify.sh and be recorded DONE.
     if [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
         logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+        _mark_step_failed
         exit 1
     fi
 
@@ -973,7 +1072,7 @@ if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
     log_routing "step-${STEP_PAD}" "false" "0" "halted"
-    rm -f "$WIP_FILE"
+    rm -f "$WIP_FILE" "$FAIL_MARKER"
     exit 2
 fi
 
@@ -1018,6 +1117,7 @@ if [ -n "$_MP" ] || [ -n "$_MP_PKG" ]; then
     logf "    Discarding malformed files and resetting working tree."
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
+    _mark_step_failed
     rm -f "$WIP_FILE"
     exit 1
 fi
@@ -1119,11 +1219,12 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
     git commit -m "Step $NEXT: complete"
-    rm -f "$WIP_FILE"
+    rm -f "$WIP_FILE" "$FAIL_MARKER"
     DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
     log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
     logf "==> Step $NEXT committed."
 else
     logf "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
+    _mark_step_failed
     exit 1
 fi

@@ -8,8 +8,13 @@
 #   /model anthropic/claude-opus-4-7        # Tier 3 escalation
 #   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
 
-model: openai/Qwen2.5-Coder-14B-Instruct-exl2
-#model: openai/huihui-Qwen2.5-Coder-32B-abliterated-EXL3-3.0bpw_H6
+model: openai/Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw
+# Alternative executors: on a 16GB GPU do NOT run a 32B dense model below
+# ~4.5bpw — and avoid "abliterated" low-bpw quants entirely; both low bpw and
+# abliteration independently degrade output and are a known source of the
+# hallucination/looping failures phase2.sh guards against. The sane ladder is:
+# 14B exl3 >=6bpw locally, then PHASE2_FALLBACK_MODEL=groq/llama-3.3-70b-versatile
+# (see NIMBUS_GUIDE.md "When a step keeps failing") for steps that defeat it.
 openai-api-base: http://localhost:5000/v1
 openai-api-key: notneeded
 
@@ -35,6 +40,12 @@ test-cmd: {{TEST_CMD}}
 # whole-safe — i.e. brand-new files, or existing files at or under the whole-file
 # threshold (~120 lines, PHASE2_WHOLE_FILE_MAX_LINES). This 'diff' value is the
 # fallback used when a step has an oversized existing target (or no explicit targets).
+#
+# TabbyAPI serving checklist (the settings that actually prevent loops):
+#   - model: Qwen2.5-Coder-14B at exl3 >=6bpw (NOT a 32B quant squeezed into 16GB)
+#   - max_seq_len: 16384-32768 (phase2.sh aborts below 16384; PHASE2_MIN_CTX overrides)
+#   - cache_mode: Q8 or FP16 — never Q4 or lower for code generation
+# A ready-to-copy server config lives in docs/tabbyapi-nimbus-example.yml.
 map-tokens: 0
 edit-format: diff
 

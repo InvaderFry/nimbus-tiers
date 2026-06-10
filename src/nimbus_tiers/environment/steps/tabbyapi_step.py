@@ -13,6 +13,8 @@ from nimbus_tiers.environment.setup_step import (
     InstallStatus,
     Prompter,
     SetupStep,
+    append_rc_export,
+    default_rc_path,
     read_bashrc_value,
 )
 
@@ -20,12 +22,6 @@ from nimbus_tiers.environment.setup_step import (
 TABBY_REPO = "https://github.com/theroyallab/tabbyAPI"
 DEFAULT_TABBY_PATH = "~/tabbyapi"
 TABBYAPI_URL_VAR = "TABBYAPI_URL"
-
-
-def _append_bashrc_export(var: str, value: str) -> None:
-    path = os.path.expanduser("~/.bashrc")
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(f'export {var}="{value}"\n')
 
 
 class TabbyApiStep(SetupStep):
@@ -38,13 +34,19 @@ class TabbyApiStep(SetupStep):
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
         rc_reader: Callable[[str], str | None] | None = None,
+        rc_path: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.tabby_path = tabby_path
+        self._rc_path = rc_path or default_rc_path()
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
-        self._rc_writer = rc_writer if rc_writer is not None else _append_bashrc_export
-        self._rc_reader = rc_reader if rc_reader is not None else read_bashrc_value
+        self._rc_writer = rc_writer if rc_writer is not None else (
+            lambda var, value: append_rc_export(var, value, self._rc_path)
+        )
+        self._rc_reader = rc_reader if rc_reader is not None else (
+            lambda var: read_bashrc_value(var, self._rc_path)
+        )
 
     def _resolved_path(self) -> Path:
         return Path(os.path.expanduser(self.tabby_path))
@@ -84,11 +86,12 @@ class TabbyApiStep(SetupStep):
     def _configure_remote(self) -> InstallResult:
         existing = self._rc_reader(TABBYAPI_URL_VAR)
         if existing:
-            self._log(f"Found {TABBYAPI_URL_VAR}={existing!r} in ~/.bashrc.")
+            self._log(f"Found {TABBYAPI_URL_VAR}={existing!r} in {self._rc_path}.")
             if self._confirm(f"Is {existing!r} the correct TabbyAPI endpoint?"):
                 return InstallResult(
                     InstallStatus.INSTALLED,
-                    f"{TABBYAPI_URL_VAR} already in ~/.bashrc; run `source ~/.bashrc` to apply",
+                    f"{TABBYAPI_URL_VAR} already in {self._rc_path}; "
+                    f"run `source {self._rc_path}` to apply",
                 )
         url = self._prompt("TabbyAPI endpoint URL (e.g. http://192.168.1.100:5000)")
         if not url:
@@ -96,17 +99,17 @@ class TabbyApiStep(SetupStep):
         self._log(
             "\nNote: if your TabbyAPI instance has authentication enabled, you will also\n"
             "need to set TABBYAPI_API_KEY in your shell. Find the key in config.yml on\n"
-            "your Windows host (api_key field), then add it to ~/.bashrc:\n"
+            f"your Windows host (api_key field), then add it to {self._rc_path}:\n"
             "    export TABBYAPI_API_KEY=\"your-key-here\"\n"
         )
-        if self._confirm(f"Append export {TABBYAPI_URL_VAR}={url!r} to ~/.bashrc?"):
+        if self._confirm(f"Append export {TABBYAPI_URL_VAR}={url!r} to {self._rc_path}?"):
             try:
                 self._rc_writer(TABBYAPI_URL_VAR, url)
             except OSError as exc:
                 return InstallResult(InstallStatus.FAILED, str(exc))
             return InstallResult(
                 InstallStatus.INSTALLED,
-                f"{TABBYAPI_URL_VAR}={url} written to ~/.bashrc; restart your shell to apply",
+                f"{TABBYAPI_URL_VAR}={url} written to {self._rc_path}; restart your shell to apply",
             )
         return InstallResult(
             InstallStatus.SKIPPED,

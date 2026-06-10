@@ -100,3 +100,80 @@ def test_regex_flags_malformed_jvm_paths(path: str) -> None:
 def test_regex_allows_valid_paths(path: str) -> None:
     regex = _extract_jvm_dotted_dir_re()
     assert not _grep_matches(regex, path), f"guard should not flag valid path: {path!r}"
+
+
+# ----- context-length preflight ----------------------------------------------
+
+
+def _extract_max_seq_len_re() -> str:
+    """Pull the max_seq_len grep -oE pattern out of phase2.sh."""
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    m = re.search(r"grep -oE '(\"max_seq_len\"[^']*)'", text)
+    assert m, "max_seq_len extraction pattern not found in phase2.sh"
+    return m.group(1)
+
+
+def test_preflight_enforces_context_length_floor() -> None:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "PHASE2_MIN_CTX" in text, "phase2.sh missing PHASE2_MIN_CTX env override"
+    assert "/model\"" in text, (
+        "preflight should query TabbyAPI's /v1/model endpoint for the model card"
+    )
+    assert "skipping context-length check" in text, (
+        "non-TabbyAPI servers (no /v1/model) must skip the check, not fail"
+    )
+
+
+def test_max_seq_len_pattern_parses_tabbyapi_model_card() -> None:
+    regex = _extract_max_seq_len_re()
+    tabby_card = (
+        '{"id":"Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw","object":"model",'
+        '"parameters":{"max_seq_len": 32768,"cache_size":32768}}'
+    )
+    result = subprocess.run(
+        ["grep", "-oE", regex], input=tabby_card, text=True, capture_output=True
+    )
+    assert result.returncode == 0, "pattern should match a TabbyAPI model card"
+    digits = re.sub(r"\D", "", result.stdout.splitlines()[0])
+    assert digits == "32768"
+
+
+def test_max_seq_len_pattern_ignores_foreign_payloads() -> None:
+    regex = _extract_max_seq_len_re()
+    vllm_models = '{"object":"list","data":[{"id":"foo","max_model_len":8192}]}'
+    result = subprocess.run(
+        ["grep", "-qE", regex], input=vllm_models, text=True
+    )
+    assert result.returncode == 1, "pattern must not match non-TabbyAPI payloads"
+
+
+# ----- automatic fallback model -----------------------------------------------
+
+
+def test_fallback_model_is_wired_into_aider_invocation() -> None:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "PHASE2_FALLBACK_MODEL" in text, "phase2.sh missing PHASE2_FALLBACK_MODEL"
+    assert "phase2-fail-step" in text, (
+        "fallback requires the per-step failure marker in .git/"
+    )
+    assert re.search(r"MODEL_OVERRIDE_ARGS=\(--model \"\$PHASE2_FALLBACK_MODEL\"\)", text), (
+        "fallback model must be passed to aider via --model"
+    )
+    assert "MODEL_OVERRIDE_ARGS[@]" in text.split("aider \\")[1], (
+        "MODEL_OVERRIDE_ARGS must be expanded in the aider command line"
+    )
+
+
+def test_routing_csv_logs_tier_from_variables_not_literals() -> None:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "${_ROUTE_TIER}" in text and "${_ROUTE_ESCALATED_FROM}" in text, (
+        "log_routing must interpolate tier/escalated_from so fallback runs are "
+        "recorded as tier 2 instead of a hardcoded tier 1"
+    )
+
+
+def test_failure_marker_cleared_on_success_and_halt() -> None:
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert text.count('rm -f "$WIP_FILE" "$FAIL_MARKER"') >= 3, (
+        "FAIL_MARKER must be removed on the success path and both halt paths"
+    )
