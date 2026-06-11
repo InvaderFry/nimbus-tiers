@@ -621,6 +621,19 @@ if [ -f verify.sh ] && grep -qE '^[[:space:]]*if[[:space:]]+![[:space:]]+wait\b'
     exit 1
 fi
 
+# Stale-sentinel guard: a WIP sentinel with NO real uncommitted work is not a
+# recoverable interruption — the prior run died (or bailed) before Aider
+# produced anything. The recovery shortcut below would run verify.sh and, since
+# a gate can pass trivially (PHASE1_SPEC requires exit 0 while the stack
+# sentinel file is still absent), skip Aider and record the step DONE with zero
+# real changes. Measured with _NOCHANGE_EXCLUDES so a housekeeping-only
+# .gitignore edit does not count as recoverable work either. Clear the sentinel
+# and fall through to a fresh Aider run instead.
+if [ -f "$WIP_FILE" ] && [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
+    echo "==> Interrupted-run sentinel found for step $NEXT but no uncommitted work to recover — clearing stale sentinel and running Aider fresh."
+    rm -f "$WIP_FILE"
+fi
+
 SKIP_AIDER=false
 if [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
@@ -1159,7 +1172,17 @@ if [ "$SKIP_AIDER" = false ]; then
     # zero-edit run reach verify.sh and be recorded DONE.
     if [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
         logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+        # Nothing real happened, so fully disarm the recovery machinery.
+        # Discard any housekeeping-only .gitignore edit (Aider corruption
+        # and/or our repair — HEAD's copy is authoritative when no real work
+        # landed) and clear the WIP sentinel. Leaving the sentinel armed let
+        # the next run take the preflight-verify recovery path, skip Aider,
+        # and commit the step DONE with zero real changes (verify.sh can pass
+        # trivially — e.g. the stack sentinel file does not exist yet); leaving
+        # .gitignore dirty would block the next run's dirty-tree guard instead.
+        git checkout -- .gitignore 2>/dev/null || true
         _mark_step_failed
+        rm -f "$WIP_FILE"
         exit 1
     fi
 

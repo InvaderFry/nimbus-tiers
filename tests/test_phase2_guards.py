@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -437,6 +438,105 @@ def test_malformed_path_cleanup_unstages_first() -> None:
         assert 0 <= reset < checkout, (
             f"cleanup after {marker!r} must unstage (git reset) before git checkout/clean"
         )
+
+
+# ----- no-change runs must not become DONE via recovery -------------------------
+
+
+def test_no_change_guard_disarms_recovery() -> None:
+    """The no-change exit must clear the WIP sentinel and .gitignore dirt.
+
+    Leaving the sentinel armed let the next run take the preflight-verify
+    recovery path, skip Aider, and commit the step DONE with zero real changes
+    (verify.sh passes trivially while the stack sentinel file is absent).
+    Leaving a housekeeping-only .gitignore edit dirty would instead wedge the
+    next run on the dirty-tree guard.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    idx = text.index("==> Aider made no changes")
+    block = text[idx:text.index("exit 1", idx)]
+    assert "git checkout -- .gitignore" in block, (
+        "no-change exit must discard housekeeping-only .gitignore edits"
+    )
+    assert 'rm -f "$WIP_FILE"' in block, (
+        "no-change exit must clear the WIP sentinel — nothing real happened"
+    )
+    # Defense in depth: even if some path leaves a sentinel with a clean tree
+    # (e.g. Ctrl+C before Aider wrote anything), the recovery block must treat
+    # it as stale and run Aider fresh instead of preflight-verify skipping.
+    stale = text.index("clearing stale sentinel")
+    preflight = text.index("running pre-flight verify")
+    assert stale < preflight, (
+        "the stale-sentinel guard must run before the preflight-verify recovery"
+    )
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def test_e2e_no_change_run_never_records_done(tmp_path: Path) -> None:
+    """End-to-end repro of the false-DONE recovery bug.
+
+    A fake aider whose only output is corrupting .gitignore must leave the
+    step NOT recorded on the first run AND on a follow-up run — previously the
+    first run kept the WIP sentinel armed, so the second run's recovery path
+    skipped Aider, re-ran the (trivially passing) gate, and committed
+    'Step 1: DONE' with zero real changes.
+    """
+    repo = tmp_path / "proj"
+    plans = repo / "plans"
+    plans.mkdir(parents=True)
+    (repo / ".gitignore").write_text(
+        ".aider*\n!.aider.conf.yml\n!.aiderignore\nplans/*.log\n", encoding="utf-8"
+    )
+    (repo / "verify.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (repo / "verify.sh").chmod(0o755)
+    (repo / "existing.txt").write_text("payload\n", encoding="utf-8")
+    # Edit-only step: the planned file exists, so the planned-file existence
+    # guard cannot mask the bug on the recovery path.
+    (plans / "step01.md").write_text(
+        "# Step 01: edit\n## Files to change\n- existing.txt\n", encoding="utf-8"
+    )
+    phase2 = repo / "phase2.sh"
+    phase2.write_text(PHASE2_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    phase2.chmod(0o755)
+
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "config", "commit.gpgsign", "false")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "scaffold")
+    _git(repo, "checkout", "-qb", "feature/test")
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_aider = bindir / "aider"
+    fake_aider.write_text(
+        "#!/usr/bin/env bash\necho broken > .gitignore\nexit 0\n", encoding="utf-8"
+    )
+    fake_aider.chmod(0o755)
+    env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}")
+
+    for attempt in (1, 2):
+        result = subprocess.run(
+            ["./phase2.sh"], cwd=repo, env=env, capture_output=True, text=True,
+            timeout=120,
+        )
+        assert result.returncode == 1, (
+            f"run {attempt} must fail (no real changes), got rc="
+            f"{result.returncode}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        assert not (repo / ".git" / "phase2-wip-step01").exists(), (
+            f"run {attempt} must not leave the WIP sentinel armed"
+        )
+
+    completed = repo / "CompletedSteps.md"
+    assert not completed.exists(), (
+        "a zero-change run must never be recorded DONE: "
+        f"{completed.read_text(encoding='utf-8') if completed.exists() else ''}"
+    )
 
 
 # ----- python verify.sh helper --------------------------------------------------
