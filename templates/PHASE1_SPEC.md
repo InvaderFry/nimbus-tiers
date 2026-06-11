@@ -275,6 +275,14 @@ A Bash script that:
 
   Use whichever sentinel is appropriate for this project. If the expected
   sentinel does not exist, print a message that names it and exit 0.
+
+  **Python — virtualenv check:** After confirming `pyproject.toml` or
+  `requirements.txt` exists (sentinel present), check for `.venv`. A missing
+  `.venv` is an **infrastructure failure** (the environment was never
+  created), NOT an uninitialized-project case. Print an error and `exit 1`.
+  Do NOT `exit 0` — that silently passes the gate and lets Phase 2 record a
+  step DONE without running a single test. See `PHASE1_VERIFY_HELPER.md` for
+  the exact guard to inline.
 - If initialized, runs the automated build/lint/test gate.
 - The gate must **compile the whole application** (not just the changed file)
   and, for framework apps, exercise at least one full-context startup test

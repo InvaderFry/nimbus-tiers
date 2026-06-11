@@ -524,7 +524,11 @@ _NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
 # interrupted prior run for this step. Without this guard the bottom-of-script
 # `git add -A` would silently sweep unrelated edits into the step commit.
 if [ ! -f "$WIP_FILE" ]; then
-    DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+    # Use _COMMIT_EXCLUDES (which adds ':!plans/*.log' to _BUILD_EXCLUDES) so that
+    # step-log files — excluded from commits — never trip the dirty-tree guard.
+    # Without this a broken .gitignore (Aider sometimes strips plans/*.log) makes
+    # every subsequent run fail before invoking Aider, self-blocking the executor.
+    DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
     if [ -n "$DIRTY" ]; then
         echo "ERROR: working tree has uncommitted changes (and no interrupted-run sentinel)."
         echo "       Commit, stash, or discard them before running phase2.sh — otherwise they"
@@ -1142,7 +1146,7 @@ if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
         # false and Aider re-runs to complete the step. When the tree is clean
         # (Aider was killed before writing anything), remove WIP_FILE so the next
         # invocation runs Aider fresh instead of looping through SKIP_AIDER=true.
-        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
         if [ -n "$_RECOVERY_DIRTY" ]; then
             logf "    The prior Aider run left uncommitted partial changes in the working tree." \
                  "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to" \
@@ -1198,6 +1202,30 @@ if [ "${#_SCRUBBED[@]}" -gt 0 ]; then
     for _s in "${_SCRUBBED[@]}"; do logf "    $_s"; done
 fi
 
+# .gitignore integrity guard: Aider occasionally rewrites .gitignore (adds its
+# own globs if absent) and can accidentally truncate or drop existing entries.
+# Three entries are load-bearing:
+#   .aider*          — Aider re-adds this on every run if missing, dirtying the
+#                      tree and defeating the "Aider made no changes" guard.
+#   !.aider.conf.yml / !.aiderignore — keep the committed config files visible.
+#   plans/*.log      — without this the next run's dirty-tree guard blocks itself
+#                      on the step-log file written before the guard runs.
+# Re-append any entry missing from .gitignore; commit picks it up alongside the
+# step diff, so the repo is never left in the broken state that caused the
+# self-blocking failure observed in 0609-python-failed.
+_GITIGNORE_REQUIRED=('.aider*' '!.aider.conf.yml' '!.aiderignore' 'plans/*.log')
+_GITIGNORE_RESTORED=()
+for _gi_entry in "${_GITIGNORE_REQUIRED[@]}"; do
+    if ! grep -qxF "$_gi_entry" .gitignore 2>/dev/null; then
+        printf '%s\n' "$_gi_entry" >> .gitignore
+        _GITIGNORE_RESTORED+=("$_gi_entry")
+    fi
+done
+if [ "${#_GITIGNORE_RESTORED[@]}" -gt 0 ]; then
+    logf "==> WARN: .gitignore was missing required entries (Aider may have truncated it) — restored:"
+    for _gi in "${_GITIGNORE_RESTORED[@]}"; do logf "    $_gi"; done
+fi
+
 # Shell owns bookkeeping — runs after aider exits, independently of whether aider's
 # internal summarization completed. Prevents lost progress on aider crashes post-verification.
 # verify.sh output is appended to the step log so one file contains both Aider output
@@ -1218,10 +1246,15 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
+    # Compute diff size from the staged index before committing, then append the
+    # routing row and re-stage it so the CSV lands in the same commit as the step
+    # diff. Previously log_routing ran after git commit, leaving logs/ai-routing.csv
+    # dirty and triggering a second bookkeeping commit on the next run.
+    DIFF_LINES=$(git diff --cached --numstat 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
+    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
+    [ -f "$ROUTING_LOG" ] && git add -- "$ROUTING_LOG"
     git commit -m "Step $NEXT: complete"
     rm -f "$WIP_FILE" "$FAIL_MARKER"
-    DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
-    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
     logf "==> Step $NEXT committed."
 else
     logf "==> verify.sh failed after aider exited — step $NEXT NOT recorded."
