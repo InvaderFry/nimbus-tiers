@@ -299,6 +299,49 @@ _mark_step_failed() {
     : > "$FAIL_MARKER" 2>/dev/null || true
 }
 
+# Required-.gitignore-entries repair: Aider can corrupt .gitignore when a step
+# lists it as an edit target (observed: truncated to a single partial line).
+# Losing `plans/*.log` is self-blocking — phase2.sh's own step logs become
+# untracked files that trip the dirty-tree guard on later runs; losing `.aider*`
+# invites Aider's startup rewrite to dirty the tree on every run. Re-append what
+# is missing so one bad edit cannot wedge the pipeline; the repaired file is
+# committed with the step, so Phase 3 review still sees the diff. grep -x
+# matches whole lines and -F literal text: a commented-out or glued-onto-
+# another-line variant counts as missing and gets a clean rule line. Idempotent
+# (a repaired file needs nothing on the next call), so it is safe to invoke
+# from both the post-Aider and the recovery paths.
+_gitignore_has() {
+    grep -qxF -- "$1" .gitignore 2>/dev/null
+}
+_repair_gitignore() {
+    local _append=() _gi
+    # .gitignore negations are order-dependent: `!.aider.conf.yml` and
+    # `!.aiderignore` only re-include the files if they appear AFTER the
+    # `.aider*` glob they carve out of. So when the glob line is missing, the
+    # whole ordered block is re-appended even if the negations survived —
+    # appending `.aider*` alone after them would re-ignore both config files.
+    if ! _gitignore_has '.aider*'; then
+        _append+=('.aider*' '!.aider.conf.yml' '!.aiderignore')
+    else
+        _gitignore_has '!.aider.conf.yml' || _append+=('!.aider.conf.yml')
+        _gitignore_has '!.aiderignore'    || _append+=('!.aiderignore')
+    fi
+    _gitignore_has 'plans/*.log' || _append+=('plans/*.log')
+    if [ "${#_append[@]}" -eq 0 ]; then
+        return 0
+    fi
+    {
+        printf '\n%s\n' "# Restored by phase2.sh: required entries were missing after the Aider run."
+        printf '%s\n' "${_append[@]}"
+    } >> .gitignore
+    logf_err "==> WARN: .gitignore was missing required entries after the Aider run — restored:"
+    for _gi in "${_append[@]}"; do
+        logf_err "    $_gi"
+    done
+    logf_err "    If the rest of .gitignore looks corrupted, restore it from history:" \
+             "      git checkout HEAD -- .gitignore   (then re-apply any intended edits)"
+}
+
 # Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally
 # underspecified step. Note: aider does not expose a --max-reflections flag
 # in the version used here; the retry count is not configurable via CLI or
@@ -564,8 +607,11 @@ fi
 # a pom.xml with non-resolving coordinates shipped as a "passing" step).
 # Capture the real status instead: `wait "$pid" || status=$?`. This lints the
 # one pattern that has actually shipped; verify.sh authorship rules live in
-# PHASE1_SPEC §4.
-if [ -f verify.sh ] && grep -qE 'if[[:space:]]+![[:space:]]+wait\b' verify.sh; then
+# PHASE1_SPEC §4. The regex is anchored to the start of an executable line on
+# purpose: the helper templates warn against this exact pattern in comments
+# that a correctly generated verify.sh copies verbatim, and an unanchored
+# match would reject the good gate along with the bad one.
+if [ -f verify.sh ] && grep -qE '^[[:space:]]*if[[:space:]]+![[:space:]]+wait\b' verify.sh; then
     logf_err "==> ERROR: verify.sh contains an 'if ! wait ...' status check, which swallows the" \
              "    build's real exit code (inside that branch \$? is the status of the negated" \
              "    test — always 0). The gate is non-authoritative: failing builds would be" \
@@ -1095,6 +1141,13 @@ if [ "$SKIP_AIDER" = false ]; then
         exit 2
     fi
 
+    # Repair required .gitignore entries BEFORE the no-change guard below:
+    # if Aider's only output was corrupting .gitignore, that guard exits 1
+    # (correctly — a repaired ignore file is not step progress, which is why
+    # _NOCHANGE_EXCLUDES keeps excluding .gitignore), and a repair placed
+    # after it would never run, leaving the plans/*.log rule lost.
+    _repair_gitignore
+
     # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
     # If no files changed, the model was never reached — do not mark the step done.
     # Use `git status --porcelain` (not `git diff`) so newly created *untracked*
@@ -1135,32 +1188,11 @@ if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
     exit 2
 fi
 
-# Required-.gitignore-entries guard: Aider can corrupt .gitignore when a step
-# lists it as an edit target (observed: truncated to a single partial line).
-# Losing `plans/*.log` is self-blocking — phase2.sh's own step logs become
-# untracked files that trip the dirty-tree guard on later runs; losing `.aider*`
-# invites Aider's startup rewrite to dirty the tree on every run. Re-append any
-# required entry that is missing so one bad edit cannot wedge the pipeline. The
-# repaired file is committed with the step, so Phase 3 review still sees the
-# diff. grep -x matches whole lines and -F literal text: a commented-out or
-# glued-onto-another-line variant counts as missing and gets a clean rule line.
-_GITIGNORE_REQUIRED=('.aider*' '!.aider.conf.yml' '!.aiderignore' 'plans/*.log')
-_GITIGNORE_MISSING=()
-for _gi in "${_GITIGNORE_REQUIRED[@]}"; do
-    grep -qxF -- "$_gi" .gitignore 2>/dev/null || _GITIGNORE_MISSING+=("$_gi")
-done
-if [ "${#_GITIGNORE_MISSING[@]}" -gt 0 ]; then
-    {
-        printf '\n%s\n' "# Restored by phase2.sh: required entries were missing after the Aider run."
-        printf '%s\n' "${_GITIGNORE_MISSING[@]}"
-    } >> .gitignore
-    logf_err "==> WARN: .gitignore was missing required entries after the Aider run — restored:"
-    for _gi in "${_GITIGNORE_MISSING[@]}"; do
-        logf_err "    $_gi"
-    done
-    logf_err "    If the rest of .gitignore looks corrupted, restore it from history:" \
-             "      git checkout HEAD -- .gitignore   (then re-apply any intended edits)"
-fi
+# Recovery-path .gitignore repair: the SKIP_AIDER=false path repairs before its
+# no-change guard (see above); this call covers the SKIP_AIDER=true recovery
+# path, which bypasses that block entirely. Idempotent, so the double call on
+# the normal path is a no-op.
+_repair_gitignore
 
 # Malformed-path guard runs BEFORE the planned-file existence check so that
 # garbage files Aider created at bad paths are cleaned up first. Without this

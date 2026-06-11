@@ -241,14 +241,42 @@ def test_gitignore_required_entries_guard_present() -> None:
     subsequent runs on the dirty-tree guard.
     """
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^_GITIGNORE_REQUIRED=\((.*)\)$", text, flags=re.MULTILINE)
-    assert m, "phase2.sh missing _GITIGNORE_REQUIRED definition"
-    for entry in (".aider*", "!.aider.conf.yml", "!.aiderignore", "plans/*.log"):
-        assert f"'{entry}'" in m.group(1), (
-            f"required .gitignore entry missing from repair guard: {entry}"
-        )
-    assert 'grep -qxF -- "$_gi" .gitignore' in text, (
+    assert "_repair_gitignore() {" in text, "phase2.sh missing _repair_gitignore"
+    assert 'grep -qxF -- "$1" .gitignore' in text, (
         "repair guard must whole-line literal-match each required entry"
+    )
+    # Negations are order-dependent (last matching rule wins): when the
+    # `.aider*` glob is missing, the whole ordered glob+negations block must be
+    # re-appended even if the negations survived — appending the glob alone
+    # after them would re-ignore both config files.
+    assert re.search(
+        r"if ! _gitignore_has '\.aider\*'; then\s*\n\s*"
+        r"_append\+=\('\.aider\*' '!\.aider\.conf\.yml' '!\.aiderignore'\)",
+        text,
+    ), "a missing .aider* glob must re-append the full ordered glob+negations block"
+    assert "_gitignore_has 'plans/*.log'" in text, (
+        "repair guard must cover the plans/*.log rule"
+    )
+
+
+def test_gitignore_repair_runs_before_no_change_guard() -> None:
+    """A gitignore-only corruption must still get repaired.
+
+    The no-change guard deliberately excludes .gitignore from its progress
+    check and exits 1 when nothing else changed — so a repair placed only
+    after that guard never runs when corrupting .gitignore was Aider's sole
+    output, leaving the plans/*.log rule lost. The post-Aider repair call must
+    precede the guard; the SKIP_AIDER=true recovery path has its own call.
+    """
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    calls = [
+        m.start()
+        for m in re.finditer(r"^[ \t]*_repair_gitignore[ \t]*$", text, flags=re.MULTILINE)
+    ]
+    assert len(calls) == 2, "expected a post-Aider and a recovery-path repair call"
+    no_change_exit = text.index("==> Aider made no changes")
+    assert min(calls) < no_change_exit, (
+        "the post-Aider repair call must precede the no-change guard's exit"
     )
 
 
@@ -321,9 +349,19 @@ def test_gate_lint_rejects_exit_swallowing_verify() -> None:
     assert _grep_matches(regex, 'if ! wait "$mvn_pid"; then'), (
         "lint must match the buggy `if ! wait` pattern"
     )
+    assert _grep_matches(regex, '  if ! wait "$gradle_pid"; then'), (
+        "lint must match the buggy pattern on an indented code line"
+    )
     assert not _grep_matches(regex, 'wait "$mvn_pid" || mvn_status=$?'), (
         "lint must not flag the correct `wait || status=$?` capture"
     )
+    # The fixed JVM helpers warn against the pattern in bash comments that a
+    # correctly generated verify.sh copies verbatim. The lint is anchored to
+    # the start of an executable line so the good gate is not rejected.
+    assert not _grep_matches(
+        regex,
+        '  # Capture wait\'s REAL exit status. Do NOT write `if ! wait "$pid"; then',
+    ), "lint must not flag the helper's warning comment"
 
 
 # ----- build-file coordinate corruption (0609 Java step01) ----------------------
