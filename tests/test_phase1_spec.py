@@ -147,3 +147,51 @@ def test_verify_sh_requires_exit_propagation_and_static_guards() -> None:
     )
     for token in ("PIPESTATUS", "exit status", "Static defect guards"):
         assert token in section, f"§4 verify.sh section missing gate-hardening token: {token}"
+
+
+def test_verify_sh_missing_toolchain_must_fail() -> None:
+    """§4 must scope the uninitialized exit-0 allowance to the sentinel only.
+
+    The 0609 Python runs shipped a verify.sh that exited 0 when .venv was
+    missing, so phase2.sh recorded a step DONE without running any tests. The
+    spec must say: missing sentinel → exit 0; missing toolchain/environment on
+    an initialized project → non-zero infrastructure failure.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 4. verify.sh",
+        "### 5. plans/stepNN.md",
+    )
+    for token in ("Missing-toolchain rule", ".venv", "infrastructure failure", "non-zero"):
+        assert token in section, f"§4 verify.sh section missing toolchain-rule token: {token}"
+
+
+def test_verify_sh_requires_direct_exit_capture() -> None:
+    """§4 must forbid reading `$?` inside the body of `if ! cmd`.
+
+    The 0609 Java run committed a broken pom.xml as a passing step because the
+    generated verify.sh used `if ! wait "$pid"; then status=$?` — inside that
+    branch $? is the status of the negated test (always 0). The spec must name
+    the anti-pattern and the correct capture.
+    """
+    section = _section(
+        SPEC_PATH.read_text(encoding="utf-8"),
+        "### 4. verify.sh",
+        "### 5. plans/stepNN.md",
+    )
+    for token in ("Capture exit status immediately", "negated", "cmd || rc=$?"):
+        assert token in section, f"§4 verify.sh section missing exit-capture token: {token}"
+
+
+def test_java_build_file_edit_guardrail_present() -> None:
+    """The Java guardrails must cover build-file coordinate fidelity.
+
+    The 0609 step01 regenerated the whole scaffold pom.xml and corrupted
+    spring-boot-starter-parent into spring-boot-starters-parent (plus
+    starter→started drift). The spec must require minimal anchored build-file
+    edits and name the corruption class phase2.sh backstops.
+    """
+    section = _section(SPEC_PATH.read_text(encoding="utf-8"), "### Java", None)
+    for token in ("Build-file edits", "spring-boot-starters-parent",
+                  "never instruct a full-file rewrite"):
+        assert token in section, f"Java build-file guardrail missing token: {token}"

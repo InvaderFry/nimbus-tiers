@@ -299,6 +299,49 @@ _mark_step_failed() {
     : > "$FAIL_MARKER" 2>/dev/null || true
 }
 
+# Required-.gitignore-entries repair: Aider can corrupt .gitignore when a step
+# lists it as an edit target (observed: truncated to a single partial line).
+# Losing `plans/*.log` is self-blocking — phase2.sh's own step logs become
+# untracked files that trip the dirty-tree guard on later runs; losing `.aider*`
+# invites Aider's startup rewrite to dirty the tree on every run. Re-append what
+# is missing so one bad edit cannot wedge the pipeline; the repaired file is
+# committed with the step, so Phase 3 review still sees the diff. grep -x
+# matches whole lines and -F literal text: a commented-out or glued-onto-
+# another-line variant counts as missing and gets a clean rule line. Idempotent
+# (a repaired file needs nothing on the next call), so it is safe to invoke
+# from both the post-Aider and the recovery paths.
+_gitignore_has() {
+    grep -qxF -- "$1" .gitignore 2>/dev/null
+}
+_repair_gitignore() {
+    local _append=() _gi
+    # .gitignore negations are order-dependent: `!.aider.conf.yml` and
+    # `!.aiderignore` only re-include the files if they appear AFTER the
+    # `.aider*` glob they carve out of. So when the glob line is missing, the
+    # whole ordered block is re-appended even if the negations survived —
+    # appending `.aider*` alone after them would re-ignore both config files.
+    if ! _gitignore_has '.aider*'; then
+        _append+=('.aider*' '!.aider.conf.yml' '!.aiderignore')
+    else
+        _gitignore_has '!.aider.conf.yml' || _append+=('!.aider.conf.yml')
+        _gitignore_has '!.aiderignore'    || _append+=('!.aiderignore')
+    fi
+    _gitignore_has 'plans/*.log' || _append+=('plans/*.log')
+    if [ "${#_append[@]}" -eq 0 ]; then
+        return 0
+    fi
+    {
+        printf '\n%s\n' "# Restored by phase2.sh: required entries were missing after the Aider run."
+        printf '%s\n' "${_append[@]}"
+    } >> .gitignore
+    logf_err "==> WARN: .gitignore was missing required entries after the Aider run — restored:"
+    for _gi in "${_append[@]}"; do
+        logf_err "    $_gi"
+    done
+    logf_err "    If the rest of .gitignore looks corrupted, restore it from history:" \
+             "      git checkout HEAD -- .gitignore   (then re-apply any intended edits)"
+}
+
 # Wall-clock cap (timeout 15m) limits the blast radius of a fundamentally
 # underspecified step. Note: aider does not expose a --max-reflections flag
 # in the version used here; the retry count is not configurable via CLI or
@@ -423,7 +466,22 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
                         "    so it can misname the model that actually runs. If output quality is" \
                         "    poor (e.g. corrupted/verbatim-copy failures), check the inference" \
                         "    host's TabbyAPI config.yml (model_dir) and cache_mode (avoid 2/3-bit" \
-                        "    KV cache; prefer 8,8 or FP16) before blaming the model choice."
+                        "    KV cache; prefer 8,8 or FP16) before blaming the model choice." \
+                        "    Set PHASE2_STRICT_MODEL_MATCH=1 to make this mismatch fatal."
+                    # Opt-in hard gate. The default stays a warning because server id
+                    # formatting (folder name vs label) varies and an equality gate
+                    # would false-positive; but a mismatch that is real and ignored
+                    # run after run is how weak/wrong-quant output gets misattributed
+                    # to everything else first. Any non-empty value other than 0 arms it.
+                    case "${PHASE2_STRICT_MODEL_MATCH:-}" in
+                        ''|0) ;;
+                        *)
+                            logf_err "==> ERROR: aborting on model mismatch (PHASE2_STRICT_MODEL_MATCH is set)." \
+                                "    Load the configured model on the inference host, or fix the 'model:'" \
+                                "    label in .aider.conf.yml to match what the server actually serves."
+                            exit 1
+                            ;;
+                    esac
                 fi
                 # Context-length floor. The single most common root cause of
                 # degenerate repetition loops and phantom SEARCH/REPLACE blocks on
@@ -523,8 +581,14 @@ _NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
 # Refuse to start with a dirty working tree unless a WIP sentinel signals an
 # interrupted prior run for this step. Without this guard the bottom-of-script
 # `git add -A` would silently sweep unrelated edits into the step commit.
+# Uses _COMMIT_EXCLUDES (not _BUILD_EXCLUDES) so plans/*.log never counts as
+# dirty: step logs are normally gitignored, but this script writes $LOG_FILE
+# (preflight WARNs) BEFORE this check — so if .gitignore ever loses its
+# plans/*.log rule (e.g. Aider corrupts the file), each run would otherwise
+# create an untracked log and then block itself here, wedging the pipeline.
+# The logs are also excluded from the step commit, so ignoring them is safe.
 if [ ! -f "$WIP_FILE" ]; then
-    DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+    DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
     if [ -n "$DIRTY" ]; then
         echo "ERROR: working tree has uncommitted changes (and no interrupted-run sentinel)."
         echo "       Commit, stash, or discard them before running phase2.sh — otherwise they"
@@ -534,6 +598,40 @@ if [ ! -f "$WIP_FILE" ]; then
         printf '%s\n' "$DIRTY" | sed 's/^/  /'
         exit 1
     fi
+fi
+
+# Gate-integrity lint: refuse to trust a verify.sh containing the known
+# exit-code-swallowing pattern `if ! wait "$pid"; then status=$?`. Inside that
+# branch $? holds the status of the NEGATED test (always 0), so every build
+# failure reports success and a broken step gets committed as DONE (observed:
+# a pom.xml with non-resolving coordinates shipped as a "passing" step).
+# Capture the real status instead: `wait "$pid" || status=$?`. This lints the
+# one pattern that has actually shipped; verify.sh authorship rules live in
+# PHASE1_SPEC §4. The regex is anchored to the start of an executable line on
+# purpose: the helper templates warn against this exact pattern in comments
+# that a correctly generated verify.sh copies verbatim, and an unanchored
+# match would reject the good gate along with the bad one.
+if [ -f verify.sh ] && grep -qE '^[[:space:]]*if[[:space:]]+![[:space:]]+wait\b' verify.sh; then
+    logf_err "==> ERROR: verify.sh contains an 'if ! wait ...' status check, which swallows the" \
+             "    build's real exit code (inside that branch \$? is the status of the negated" \
+             "    test — always 0). The gate is non-authoritative: failing builds would be" \
+             "    recorded DONE. Fix verify.sh to capture the status directly, e.g.:" \
+             "        wait \"\$pid\" || status=\$?" \
+             "    (see PHASE1_VERIFY_HELPER.md), then re-run ./phase2.sh."
+    exit 1
+fi
+
+# Stale-sentinel guard: a WIP sentinel with NO real uncommitted work is not a
+# recoverable interruption — the prior run died (or bailed) before Aider
+# produced anything. The recovery shortcut below would run verify.sh and, since
+# a gate can pass trivially (PHASE1_SPEC requires exit 0 while the stack
+# sentinel file is still absent), skip Aider and record the step DONE with zero
+# real changes. Measured with _NOCHANGE_EXCLUDES so a housekeeping-only
+# .gitignore edit does not count as recoverable work either. Clear the sentinel
+# and fall through to a fresh Aider run instead.
+if [ -f "$WIP_FILE" ] && [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
+    echo "==> Interrupted-run sentinel found for step $NEXT but no uncommitted work to recover — clearing stale sentinel and running Aider fresh."
+    rm -f "$WIP_FILE"
 fi
 
 SKIP_AIDER=false
@@ -742,12 +840,26 @@ if [ "$SKIP_AIDER" = false ]; then
     _existing_target_count=${#_EXISTING_TARGETS[@]}
     _whole_safe=true
     _oversized_target=""
+    _buildfile_target=""
     if [ "$_file_target_count" -eq 0 ]; then
         # No explicit targets: leave Aider on its default (diff). Forcing whole
         # with no --file args invites from-scratch hallucination.
         _whole_safe=false
     fi
     for _et in ${_EXISTING_TARGETS[@]+"${_EXISTING_TARGETS[@]}"}; do
+        # An existing build file is never whole-safe regardless of size:
+        # dependency coordinates are verbatim identifiers, and whole-format
+        # regeneration makes the model re-emit every one of them — the
+        # observed corruption vector (a 40-line pom.xml regenerated in full
+        # with spring-boot-starter-parent mangled to spring-boot-starters-parent).
+        # A diff edit only touches the lines the step adds.
+        case "${_et##*/}" in
+            pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts)
+                _whole_safe=false
+                _buildfile_target="$_et"
+                break
+                ;;
+        esac
         # wc -l counts newlines, so a final line without a trailing newline is
         # uncounted — the count is a lower bound, which is fine for a threshold.
         _lc=$(wc -l < "$_et" 2>/dev/null | tr -cd '0-9')
@@ -765,6 +877,8 @@ if [ "$SKIP_AIDER" = false ]; then
         else
             logf "==> All ${_file_target_count} editable target(s) are new or <= ${WHOLE_FILE_MAX_LINES} lines — using Aider whole-file edit format (more reliable for local models than diff/SEARCH/REPLACE; verify.sh gates any dropped content)."
         fi
+    elif [ -n "$_buildfile_target" ]; then
+        logf "==> Existing build file ${_buildfile_target} is an edit target — using diff edit format for this step. Whole-file regeneration of a build file invites dependency-coordinate corruption (e.g. spring-boot-starter-parent -> spring-boot-starters-parent); keep the edit small and anchored on exact existing lines (see PHASE1_SPEC §Java)."
     elif [ -n "$_oversized_target" ]; then
         logf "==> Existing target ${_oversized_target} exceeds the ${WHOLE_FILE_MAX_LINES}-line whole-file threshold — using diff edit format for this step. Keep the edit small and give the model verbatim anchor text in the step file (see PHASE1_SPEC §1)."
     fi
@@ -1029,13 +1143,23 @@ if [ "$SKIP_AIDER" = false ]; then
              "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
         git reset -q HEAD -- . 2>/dev/null || true    # unstage everything
         git add -- "$HALT_FILE"                       # restage only the halt file
+        # Routing row is appended and staged BEFORE the commit so the halt
+        # commit leaves a clean tree (see the success-path note on ordering).
+        log_routing "step-${STEP_PAD}" "false" "0" "halted"
+        git add -- "$ROUTING_LOG" 2>/dev/null || true
         git commit -m "Step $NEXT: HALT (missing prior artifact)"
         git checkout -- . 2>/dev/null || true         # discard tracked-file edits
         git clean -fd 2>/dev/null || true             # remove untracked, non-ignored files
-        log_routing "step-${STEP_PAD}" "false" "0" "halted"
         rm -f "$WIP_FILE" "$FAIL_MARKER"
         exit 2
     fi
+
+    # Repair required .gitignore entries BEFORE the no-change guard below:
+    # if Aider's only output was corrupting .gitignore, that guard exits 1
+    # (correctly — a repaired ignore file is not step progress, which is why
+    # _NOCHANGE_EXCLUDES keeps excluding .gitignore), and a repair placed
+    # after it would never run, leaving the plans/*.log rule lost.
+    _repair_gitignore
 
     # Guard against aider exiting 0 without touching anything (e.g. unreachable model, bad API key).
     # If no files changed, the model was never reached — do not mark the step done.
@@ -1048,7 +1172,17 @@ if [ "$SKIP_AIDER" = false ]; then
     # zero-edit run reach verify.sh and be recorded DONE.
     if [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
         logf "==> Aider made no changes — model may not have been reached (check API key / endpoint). Step $NEXT NOT recorded."
+        # Nothing real happened, so fully disarm the recovery machinery.
+        # Discard any housekeeping-only .gitignore edit (Aider corruption
+        # and/or our repair — HEAD's copy is authoritative when no real work
+        # landed) and clear the WIP sentinel. Leaving the sentinel armed let
+        # the next run take the preflight-verify recovery path, skip Aider,
+        # and commit the step DONE with zero real changes (verify.sh can pass
+        # trivially — e.g. the stack sentinel file does not exist yet); leaving
+        # .gitignore dirty would block the next run's dirty-tree guard instead.
+        git checkout -- .gitignore 2>/dev/null || true
         _mark_step_failed
+        rm -f "$WIP_FILE"
         exit 1
     fi
 
@@ -1068,13 +1202,20 @@ if [ -n "$(git status --porcelain -- "$HALT_FILE" 2>/dev/null)" ]; then
          "    Review the halt report, fix the upstream gap, then re-run ./phase2.sh."
     git reset -q HEAD -- . 2>/dev/null || true
     git add -- "$HALT_FILE"
+    log_routing "step-${STEP_PAD}" "false" "0" "halted"
+    git add -- "$ROUTING_LOG" 2>/dev/null || true
     git commit -m "Step $NEXT: HALT (missing prior artifact)"
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
-    log_routing "step-${STEP_PAD}" "false" "0" "halted"
     rm -f "$WIP_FILE" "$FAIL_MARKER"
     exit 2
 fi
+
+# Recovery-path .gitignore repair: the SKIP_AIDER=false path repairs before its
+# no-change guard (see above); this call covers the SKIP_AIDER=true recovery
+# path, which bypasses that block entirely. Idempotent, so the double call on
+# the normal path is a no-op.
+_repair_gitignore
 
 # Malformed-path guard runs BEFORE the planned-file existence check so that
 # garbage files Aider created at bad paths are cleaned up first. Without this
@@ -1115,6 +1256,49 @@ if [ -n "$_MP" ] || [ -n "$_MP_PKG" ]; then
         while IFS= read -r _mpl; do logf "    $_mpl"; done <<< "$_MP_PKG"
     fi
     logf "    Discarding malformed files and resetting working tree."
+    # Unstage FIRST: Aider stages the new files it creates, and neither
+    # `git checkout -- .` (restores from the index, which still holds them)
+    # nor `git clean -fd` (skips index-tracked paths) touches staged new
+    # files — without the reset they survive cleanup and wedge later runs.
+    git reset -q HEAD -- . 2>/dev/null || true
+    git checkout -- . 2>/dev/null || true
+    git clean -fd 2>/dev/null || true
+    _mark_step_failed
+    rm -f "$WIP_FILE"
+    exit 1
+fi
+
+# Build-file coordinate-corruption guard: when a local model regenerates
+# pom.xml / build.gradle it can corrupt well-known coordinates by a few
+# characters (observed: spring-boot-starter-parent -> spring-boot-starters-parent,
+# spring-boot-starter-* -> spring-boot-started-*). Those near-miss names
+# resolve to nothing, but only a CORRECT verify.sh catches that — and a buggy
+# generated gate is exactly how one such pom shipped as a "passing" step. This
+# static guard rejects the known corruption class before verify.sh ever runs,
+# independent of the generated gate's quality. Only build files touched THIS
+# run are inspected; pre-existing content is not this step's responsibility.
+# `spring-boot-start(ed|ers)` matches the corruptions but not the legitimate
+# `spring-boot-starter*` names ('er' is neither 'ed' nor 'ers' at that offset).
+_BUILD_COORD_CORRUPTION_RE='spring-boot-start(ed|ers)'
+_CORRUPT_BUILD_FILES=()
+for _bf in pom.xml build.gradle build.gradle.kts settings.gradle settings.gradle.kts; do
+    [ -f "$_bf" ] || continue
+    [ -n "$(git status --porcelain -- "$_bf" 2>/dev/null)" ] || continue
+    if grep -qE "$_BUILD_COORD_CORRUPTION_RE" "$_bf"; then
+        _CORRUPT_BUILD_FILES+=("$_bf")
+    fi
+done
+if [ "${#_CORRUPT_BUILD_FILES[@]}" -gt 0 ]; then
+    logf "==> ERROR: corrupted dependency coordinates detected — step $NEXT NOT recorded."
+    for _bf in "${_CORRUPT_BUILD_FILES[@]}"; do
+        logf "    $_bf matches '${_BUILD_COORD_CORRUPTION_RE}' — a near-miss corruption of a" \
+             "    spring-boot-starter-* coordinate (e.g. spring-boot-starters-parent," \
+             "    spring-boot-started-web). These artifacts do not exist and cannot resolve."
+    done
+    logf "    Discarding this run's changes and resetting working tree." \
+         "    This is a model-output QUALITY failure — see the serving checklist in" \
+         "    .aider.conf.yml / docs/tabbyapi-nimbus-example.yml before retrying."
+    git reset -q HEAD -- . 2>/dev/null || true
     git checkout -- . 2>/dev/null || true
     git clean -fd 2>/dev/null || true
     _mark_step_failed
@@ -1142,7 +1326,10 @@ if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
         # false and Aider re-runs to complete the step. When the tree is clean
         # (Aider was killed before writing anything), remove WIP_FILE so the next
         # invocation runs Aider fresh instead of looping through SKIP_AIDER=true.
-        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_BUILD_EXCLUDES[@]}" 2>/dev/null || true)
+        # _COMMIT_EXCLUDES, not _BUILD_EXCLUDES: this run's own $LOG_FILE is
+        # untracked whenever .gitignore lost its plans/*.log rule, and would
+        # otherwise make every recovery run look "dirty".
+        _RECOVERY_DIRTY=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
         if [ -n "$_RECOVERY_DIRTY" ]; then
             logf "    The prior Aider run left uncommitted partial changes in the working tree." \
                  "    Re-run ./phase2.sh — if verify.sh fails, Aider will be re-invoked to" \
@@ -1218,10 +1405,16 @@ if [ "$VERIFY_EXIT" -eq 0 ]; then
     [ -f CompletedSteps.md ] || echo "# Completed Steps" > CompletedSteps.md
     echo "Step $NEXT: DONE" >> CompletedSteps.md
     git add -A -- '.' "${_COMMIT_EXCLUDES[@]}"
+    # Stage first, measure the staged diff, THEN append the routing row and
+    # stage it too, so the step commit includes its own bookkeeping. Appending
+    # after the commit (the old order) left logs/ai-routing.csv dirty after
+    # every "successful" step — tripping the next run's dirty-tree guard and
+    # forcing extra bookkeeping-only commits.
+    DIFF_LINES=$(git diff --cached --numstat 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
+    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
+    git add -- "$ROUTING_LOG" 2>/dev/null || true
     git commit -m "Step $NEXT: complete"
     rm -f "$WIP_FILE" "$FAIL_MARKER"
-    DIFF_LINES=$(git show --numstat HEAD 2>/dev/null | awk '{a+=$1+$2} END {print a+0}')
-    log_routing "step-${STEP_PAD}" "true" "${DIFF_LINES:-0}" "done"
     logf "==> Step $NEXT committed."
 else
     logf "==> verify.sh failed after aider exited — step $NEXT NOT recorded."

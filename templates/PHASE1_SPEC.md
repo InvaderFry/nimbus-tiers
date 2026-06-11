@@ -275,6 +275,13 @@ A Bash script that:
 
   Use whichever sentinel is appropriate for this project. If the expected
   sentinel does not exist, print a message that names it and exit 0.
+- **Missing-toolchain rule:** the exit-0 allowance above applies ONLY to a
+  missing sentinel (project not yet initialized). Once the sentinel exists,
+  a missing or broken environment that the gate needs — e.g. a Python
+  project whose `.venv` is absent, or a missing JDK/runtime — is an
+  infrastructure failure: print a clear remediation message and exit
+  **non-zero**. A gate that exits 0 because its test runner is unavailable
+  lets `phase2.sh` record steps DONE without ever running the tests.
 - If initialized, runs the automated build/lint/test gate.
 - The gate must **compile the whole application** (not just the changed file)
   and, for framework apps, exercise at least one full-context startup test
@@ -287,6 +294,12 @@ A Bash script that:
   `${PIPESTATUS[0]}`); never let a non-zero build look like success. This is
   the difference between "tests passed" and "the gate silently swallowed a
   compile failure."
+- **Capture exit status immediately and directly.** Read `$?` on the very
+  next line after the command, or use the errexit-safe `cmd || rc=$?`. Never
+  read `$?` inside the body of `if ! cmd; then` — there it holds the status
+  of the *negated* test (always 0), so the failure is silently discarded.
+  This exact pattern once reported a non-resolving `pom.xml` as a passing
+  step; `phase2.sh` now refuses to run a `verify.sh` containing `if ! wait`.
 - **Static defect guards (cheap defense-in-depth):** when a step's correctness
   depends on a constraint a slice test can miss, add a fast `grep`-based check
   that fails the gate on the known-wrong pattern. Example for a blocking
@@ -541,6 +554,17 @@ these constraints. Omit sections for languages not used in the project.
   This is backstopped deterministically: `phase2.sh` rejects any directory
   component containing a `.` under a JVM source root (`src/main|test/java`, etc.)
   — see §4 — but planning the paths explicitly is what avoids the wasted run.
+- **Build-file edits (`pom.xml` / `build.gradle`):** dependency coordinates
+  are verbatim identifiers — a few characters of drift produces a name that
+  resolves to nothing (observed: `spring-boot-starter-parent` →
+  `spring-boot-starters-parent`, `spring-boot-starter-web` →
+  `spring-boot-started-web`). A step that edits a build file must be a
+  minimal targeted edit: quote the exact line(s) to add and an exact existing
+  anchor line from the file, and never instruct a full-file rewrite — every
+  line the model regenerates is a line it can corrupt. This is backstopped
+  deterministically: `phase2.sh` forces diff edit format when a build file is
+  a target and statically rejects the `spring-boot-start(ed|ers)` corruption
+  class — but a tight plan avoids the wasted run.
 - **Map.of() arity limit:** `Map.of(k, v, …)` has fixed-arity overloads
   that accept at most 10 key-value pairs. For maps with more than 10 entries,
   instruct the executor to use `Map.ofEntries(Map.entry(k1, v1), …)` instead.
