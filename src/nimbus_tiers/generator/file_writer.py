@@ -63,19 +63,26 @@ class FileWriter:
     ) -> WriteResult:
         if not src_path.is_file():
             raise FileNotFoundError(f"Template source not found: {src_path}")
+        rendered = self._render(src_path, substitutions or {})
+        return self.write_content(rendered, dest_path)
+
+    def write_content(self, content: bytes, dest_path: Path) -> WriteResult:
+        """Write already-rendered bytes under the same skip/force/diff policy.
+
+        Used for generated (non-template-file) content like the project
+        manifest, so it shares the exact idempotency semantics of `write`.
+        """
         if dest_path.exists() and dest_path.is_dir():
             raise IsADirectoryError(
                 f"Destination exists as a directory, expected file: {dest_path}"
             )
 
-        rendered = self._render(src_path, substitutions or {})
-
         if self.mode is WriteMode.DIFF:
-            return self._diff(rendered, dest_path)
+            return self._diff(content, dest_path)
 
         if dest_path.exists():
             existing = self._read_bytes(dest_path)
-            if existing == rendered:
+            if existing == content:
                 return WriteResult(WriteAction.UNCHANGED, dest_path, "identical")
             if self.mode is WriteMode.SKIP:
                 self._log(f"[skip] {dest_path} already exists (use --force to overwrite)")
@@ -83,7 +90,7 @@ class FileWriter:
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         with open(dest_path, "wb") as fh:
-            fh.write(rendered)
+            fh.write(content)
         return WriteResult(WriteAction.WRITTEN, dest_path)
 
     def _diff(self, rendered: bytes, dest_path: Path) -> WriteResult:

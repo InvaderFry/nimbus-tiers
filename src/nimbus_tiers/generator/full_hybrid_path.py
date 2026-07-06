@@ -21,6 +21,7 @@ class FullHybridPath(StackScaffoldPath):
             TemplateSpec(
                 Path("tabbyapi-nimbus-example.yml"),
                 Path("docs/tabbyapi-nimbus-example.yml"),
+                managed=True,
             )
         ]
 

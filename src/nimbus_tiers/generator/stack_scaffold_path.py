@@ -36,29 +36,36 @@ class StackScaffoldPath(SetupPath):
         self.class_name = class_name
 
     def template_files(self) -> list[TemplateSpec]:
-        common: list[tuple[str, str]] = [
-            ("CONTEXT.md", "CONTEXT.md"),
-            ("VERIFY.md", "VERIFY.md"),
-            ("CLAUDE.md", "CLAUDE.md"),
-            ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
-            ("PHASE1_SPEC.md", "PHASE1_SPEC.md"),
-            ("phase2.sh", "phase2.sh"),
-            ("phase2-lib.sh", "phase2-lib.sh"),
-            (f"paths/{self.name}/.aider.conf.yml", ".aider.conf.yml"),
-            (".aiderignore", ".aiderignore"),
-            (".gitignore", ".gitignore"),
-            ("plans/README.md", "plans/README.md"),
-            ("logs/ai-routing.csv", "logs/ai-routing.csv"),
-            ("docs/architecture.md", "docs/architecture.md"),
+        # `managed=True` marks tool-owned files that `nimbus-update` may
+        # overwrite with the current template version. Everything else is
+        # user-owned after generation: CONTEXT.md/VERIFY.md/CLAUDE.md carry
+        # project-specific content, .aider.conf.yml gets model tuning,
+        # .gitignore and the routing CSV accumulate project state, and the
+        # stack starters become real source code.
+        common: list[TemplateSpec] = [
+            TemplateSpec(Path("CONTEXT.md"), Path("CONTEXT.md")),
+            TemplateSpec(Path("VERIFY.md"), Path("VERIFY.md")),
+            TemplateSpec(Path("CLAUDE.md"), Path("CLAUDE.md")),
+            TemplateSpec(Path("NIMBUS_GUIDE.md"), Path("NIMBUS_GUIDE.md"), managed=True),
+            TemplateSpec(Path("PHASE1_SPEC.md"), Path("PHASE1_SPEC.md"), managed=True),
+            TemplateSpec(Path("phase2.sh"), Path("phase2.sh"), managed=True),
+            TemplateSpec(Path("phase2-lib.sh"), Path("phase2-lib.sh"), managed=True),
+            TemplateSpec(Path(f"paths/{self.name}/.aider.conf.yml"), Path(".aider.conf.yml")),
+            TemplateSpec(Path(".aiderignore"), Path(".aiderignore"), managed=True),
+            TemplateSpec(Path(".gitignore"), Path(".gitignore")),
+            TemplateSpec(Path("plans/README.md"), Path("plans/README.md"), managed=True),
+            TemplateSpec(Path("logs/ai-routing.csv"), Path("logs/ai-routing.csv")),
+            TemplateSpec(Path("docs/architecture.md"), Path("docs/architecture.md"), managed=True),
         ]
         return (
-            [TemplateSpec(Path(src), Path(dest)) for src, dest in common]
+            common
             + self.extra_docs()
             + self._stack_template_files()
             + [
                 TemplateSpec(
                     Path(f"stacks/{self.stack}/PHASE1_VERIFY.md"),
                     Path("PHASE1_VERIFY_HELPER.md"),
+                    managed=True,
                 )
             ]
         )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -82,7 +83,11 @@ def test_generate_writes_each_template_and_substitutes(
     assert (project_path / "deep" / "b.md").read_text() == "nested\n"
     assert report.project_name == "demo"
     assert report.setup_path_name == "fake"
-    assert report.summary().get("written") == 2
+    # Two template files plus the generation manifest.
+    assert report.summary().get("written") == 3
+    manifest = json.loads((project_path / ".nimbus-tiers.json").read_text())
+    assert manifest["path_type"] == "fake"
+    assert manifest["project_name"] == "demo"
 
 
 def test_generate_creates_destination_directory(
