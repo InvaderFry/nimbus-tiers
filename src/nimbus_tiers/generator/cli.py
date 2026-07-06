@@ -14,15 +14,15 @@ from nimbus_tiers.generator.full_hybrid_path import FullHybridPath
 from nimbus_tiers.generator.git_initializer import GitInitializer
 from nimbus_tiers.generator.light_local_path import LightLocalPath
 from nimbus_tiers.generator.project_generator import ProjectGenerator
-from nimbus_tiers.generator.setup_path import SetupPath
+from nimbus_tiers.generator.stack_scaffold_path import StackScaffoldPath
 from nimbus_tiers.resources import source_checkout_root, templates_root
 
 
 PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-PATH_REGISTRY: Mapping[str, type[SetupPath]] = {
-    # full-hybrid is listed here so it appears in --path-type choices validation.
-    # main() constructs it directly (not via PATH_REGISTRY) to pass stack/package/class params.
+# All paths share the StackScaffoldPath constructor (stack/package/class),
+# so main() can construct any of them uniformly from this registry.
+PATH_REGISTRY: Mapping[str, type[StackScaffoldPath]] = {
     "full-hybrid": FullHybridPath,
     "cloud-only": CloudOnlyPath,
     "light-local": LightLocalPath,
@@ -116,7 +116,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--path-type",
         choices=sorted(PATH_REGISTRY.keys()),
         default="full-hybrid",
-        help="Setup path. Currently only 'full-hybrid' is implemented.",
+        help=(
+            "Setup path. All paths share the same project skeleton; they differ "
+            "in the Aider executor config: full-hybrid targets TabbyAPI on "
+            "localhost:5000, light-local targets Ollama on localhost:11434, "
+            "cloud-only targets Groq (requires GROQ_API_KEY)."
+        ),
     )
     parser.add_argument(
         "--stack",
@@ -171,14 +176,11 @@ def main(argv: list[str] | None = None) -> int:
     class_name = derive_class_name(project_name)
     test_cmd = STACK_TEST_COMMANDS[args.stack]
 
-    if args.path_type == "full-hybrid":
-        setup_path = FullHybridPath(
-            stack=args.stack,
-            package_name=package_name,
-            class_name=class_name,
-        )
-    else:
-        setup_path = PATH_REGISTRY[args.path_type]()
+    setup_path = PATH_REGISTRY[args.path_type](
+        stack=args.stack,
+        package_name=package_name,
+        class_name=class_name,
+    )
 
     file_writer = FileWriter(mode=_select_mode(args))
     git_initializer = GitInitializer()
@@ -195,18 +197,15 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Stack: {args.stack} (test-cmd: {test_cmd!r})")
     print()
 
-    try:
-        report = generator.generate(
-            project_name,
-            project_path,
-            substitutions={
-                "TEST_CMD": test_cmd,
-                "PACKAGE_NAME": package_name,
-                "CLASS_NAME": class_name,
-            },
-        )
-    except NotImplementedError as exc:
-        raise SystemExit(str(exc))
+    report = generator.generate(
+        project_name,
+        project_path,
+        substitutions={
+            "TEST_CMD": test_cmd,
+            "PACKAGE_NAME": package_name,
+            "CLASS_NAME": class_name,
+        },
+    )
 
     print()
     print(report.render())

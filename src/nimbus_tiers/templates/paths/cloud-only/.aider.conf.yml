@@ -1,0 +1,27 @@
+# Aider configuration — Path A (Cloud-Only)
+# Default executor: Groq free-tier Llama 3.3 70B. No local models, no GPU.
+# Requires GROQ_API_KEY in the environment — `nimbus-setup --path-type
+# cloud-only` configures it, and phase2.sh's preflight aborts if it is unset.
+# Mid-session swaps:
+#   /model groq/llama-3.1-8b-instant        # Tier 0 trivial
+#   /model anthropic/claude-opus-4-7        # Tier 3 escalation (needs ANTHROPIC_API_KEY)
+
+model: groq/llama-3.3-70b-versatile
+
+# Safe-mode defaults — phase2.sh owns commits and verification.
+auto-commits: false
+auto-test: false
+test-cmd: {{TEST_CMD}}
+
+# A 70B served on datacenter hardware does not exhibit the low-bit-quant
+# degeneration failures the local paths guard against, but phase2.sh's other
+# guards (empty-diff, planned-file existence, verify.sh gate) still apply
+# unchanged. Mind Groq's free-tier rate limits: phase2.sh runs one step per
+# invocation, which keeps request volume modest by design.
+map-tokens: 0
+edit-format: diff
+
+# Read-only files that should always be in context for any session.
+# Per-feature step files are added by phase2.sh, not here.
+read:
+  - CONTEXT.md

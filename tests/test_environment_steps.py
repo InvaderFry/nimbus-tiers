@@ -739,3 +739,49 @@ def test_default_rc_path_falls_back_to_bashrc_when_shell_unset(
 ) -> None:
     monkeypatch.delenv("SHELL", raising=False)
     assert default_rc_path() == "~/.bashrc"
+
+
+# ---------------------------------------------------------------------------
+# Per-path step lists (environment CLI registry)
+# ---------------------------------------------------------------------------
+
+from nimbus_tiers.environment.cli import PATH_REGISTRY
+from nimbus_tiers.environment.steps import (
+    ClaudeCodeStep,
+    GroqApiKeyStep,
+    OllamaServerConfigStep,
+    OllamaStep,
+    PythonStep,
+    TabbyApiStep,
+)
+
+
+def _step_types(path_type: str) -> list[type]:
+    return [type(step) for step in PATH_REGISTRY[path_type]()]
+
+
+def test_registry_covers_all_three_paths() -> None:
+    assert set(PATH_REGISTRY) == {"full-hybrid", "light-local", "cloud-only"}
+
+
+def test_light_local_steps_use_ollama_without_tabbyapi() -> None:
+    types = _step_types("light-local")
+    assert OllamaStep in types
+    assert OllamaServerConfigStep in types
+    assert TabbyApiStep not in types
+
+
+def test_cloud_only_steps_have_no_local_runtime() -> None:
+    types = _step_types("cloud-only")
+    assert types == [PythonStep, AiderStep, GroqApiKeyStep, ClaudeCodeStep]
+
+
+def test_full_hybrid_steps_include_tabbyapi() -> None:
+    assert TabbyApiStep in _step_types("full-hybrid")
+
+
+@pytest.mark.parametrize("path_type", ["full-hybrid", "light-local", "cloud-only"])
+def test_every_path_starts_with_python_and_ends_with_claude_code(path_type: str) -> None:
+    types = _step_types(path_type)
+    assert types[0] is PythonStep
+    assert types[-1] is ClaudeCodeStep

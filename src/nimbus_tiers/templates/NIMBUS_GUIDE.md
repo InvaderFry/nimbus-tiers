@@ -7,10 +7,17 @@ Scaffolded from the [nimbus-tiers](https://github.com/invaderfry/nimbus-tiers) t
 | Phase | Tool | Output |
 |---|---|---|
 | 1. Plan | Claude Code (frontier) | `PLAN.md`, `TESTS.md`, `plans/step01.md` … `stepNN.md`, updated `CONTEXT.md` |
-| 2. Execute | Aider + local Qwen2.5-Coder-14B (TabbyAPI) | Series of git commits, one per step |
+| 2. Execute | Aider + the executor in `.aider.conf.yml` | Series of git commits, one per step |
 | 3. Review | Claude Code (frontier) | Fix list or `APPROVED` |
 
 See [`docs/architecture.md`](./docs/architecture.md) for the full reference. The canonical Phase 1 spec lives in [`PHASE1_SPEC.md`](./PHASE1_SPEC.md).
+
+> **Which executor?** Phase 2 runs whatever this project's `.aider.conf.yml`
+> configures — chosen by the `--path-type` you scaffolded with (full-hybrid:
+> TabbyAPI + Qwen2.5-Coder-14B on `localhost:5000`; light-local: Ollama on
+> `localhost:11434`; cloud-only: Groq via `GROQ_API_KEY`). Examples in this
+> guide that mention TabbyAPI/Qwen describe the Full Hybrid path; `phase2.sh`
+> itself works unchanged with any of the three.
 
 ## Per-feature workflow
 
