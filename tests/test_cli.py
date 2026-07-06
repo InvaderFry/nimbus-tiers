@@ -17,9 +17,10 @@ from nimbus_tiers.generator.cli import (
     main,
 )
 from nimbus_tiers.generator.git_initializer import GitInitializer
+from nimbus_tiers.resources import templates_root
 
 
-REPO_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"
+REPO_TEMPLATES_ROOT = templates_root()
 
 
 def _make_runner() -> MagicMock:

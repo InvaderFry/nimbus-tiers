@@ -8,9 +8,10 @@ import pytest
 
 from nimbus_tiers.generator.full_hybrid_path import FullHybridPath
 from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.resources import templates_root
 
 
-REPO_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"
+REPO_TEMPLATES_ROOT = templates_root()
 
 
 def test_full_hybrid_name() -> None:

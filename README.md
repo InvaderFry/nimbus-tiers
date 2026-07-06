@@ -6,7 +6,7 @@ A template repository for the **Hybrid AI Coding Architecture** (Plan → Execut
 
 Two stdlib-only Python CLIs:
 
-- **`generateNewProject.py`** — creates a new project folder *one directory above this repo*, copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `NIMBUS_GUIDE.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
+- **`generateNewProject.py`** — creates a new project folder *one directory above this repo* (or under the current directory when running the installed `nimbus-generate`), copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `NIMBUS_GUIDE.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
 - **`setupEnvironment.py`** — checks the host machine for the runtime stack required by Path C (Full Hybrid: NVIDIA driver, Ollama, TabbyAPI/ExLlamaV3, Aider, Claude Code, env vars). Prompts before installing or modifying anything.
 
 ## Step-by-step: from zero to first coding session
@@ -118,6 +118,8 @@ They run **identical code**. `generateNewProject.py` is a thin shim that imports
 **Use `python3 generateNewProject.py`** when you just cloned the repo and want to get started immediately.
 
 **Use `nimbus-generate`** when you want a global command so you don't have to `cd` back into the nimbus-tiers repo each time you scaffold a new project. The same applies to `nimbus-setup` vs `python3 setupEnvironment.py`.
+
+One behavioral difference: the **default destination** depends on how you run it. From a source checkout the new project is created *one directory above the repo* (as documented in the quick start). From an installed package (`pipx install .` — there is no repo to be a sibling of) it is created *under the current working directory*. Pass `--path` to choose explicitly in either mode. The templates ship inside the package (`nimbus_tiers/templates/`), so the installed commands work from anywhere.
 
 ---
 

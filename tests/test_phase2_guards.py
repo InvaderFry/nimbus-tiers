@@ -9,8 +9,10 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-PHASE2_PATH = REPO_ROOT / "templates" / "phase2.sh"
+from nimbus_tiers.resources import templates_root
+
+TEMPLATES_ROOT = templates_root()
+PHASE2_PATH = TEMPLATES_ROOT / "phase2.sh"
 
 
 def _extract_jvm_dotted_dir_re() -> str:
@@ -301,8 +303,8 @@ def test_strict_model_match_gate_is_available() -> None:
 # ----- exit-code integrity of the generated gate (0609 Java failure) -----------
 
 JAVA_HELPER_PATHS = [
-    REPO_ROOT / "templates" / "stacks" / "java-maven" / "PHASE1_VERIFY.md",
-    REPO_ROOT / "templates" / "stacks" / "java-gradle" / "PHASE1_VERIFY.md",
+    TEMPLATES_ROOT / "stacks" / "java-maven" / "PHASE1_VERIFY.md",
+    TEMPLATES_ROOT / "stacks" / "java-gradle" / "PHASE1_VERIFY.md",
 ]
 
 
@@ -541,7 +543,7 @@ def test_e2e_no_change_run_never_records_done(tmp_path: Path) -> None:
 
 # ----- python verify.sh helper --------------------------------------------------
 
-PY_HELPER_PATH = REPO_ROOT / "templates" / "stacks" / "python" / "PHASE1_VERIFY.md"
+PY_HELPER_PATH = TEMPLATES_ROOT / "stacks" / "python" / "PHASE1_VERIFY.md"
 
 
 def test_python_verify_helper_fails_hard_on_missing_venv() -> None:

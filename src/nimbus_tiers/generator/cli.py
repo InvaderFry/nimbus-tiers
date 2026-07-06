@@ -15,6 +15,7 @@ from nimbus_tiers.generator.git_initializer import GitInitializer
 from nimbus_tiers.generator.light_local_path import LightLocalPath
 from nimbus_tiers.generator.project_generator import ProjectGenerator
 from nimbus_tiers.generator.setup_path import SetupPath
+from nimbus_tiers.resources import source_checkout_root, templates_root
 
 
 PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -35,14 +36,17 @@ STACK_TEST_COMMANDS: Mapping[str, str] = {
 }
 
 
-def _repo_root() -> Path:
-    """Return the nimbus-tiers repo root (two levels up from this file)."""
-    return Path(__file__).resolve().parents[3]
-
-
 def _default_project_path(project_name: str) -> Path:
-    """Default destination = sibling directory of the template repo."""
-    return _repo_root().parent / project_name
+    """Default destination for the new project.
+
+    From a source checkout, keep the documented behavior: a sibling directory
+    of the template repo. From an installed package (pip/pipx) there is no
+    repo to be a sibling of, so default to the current working directory.
+    """
+    checkout = source_checkout_root()
+    if checkout is not None:
+        return checkout.parent / project_name
+    return Path.cwd() / project_name
 
 
 def _select_mode(args: argparse.Namespace) -> WriteMode:
@@ -152,11 +156,16 @@ def main(argv: list[str] | None = None) -> int:
         args.path.resolve() if args.path is not None else _default_project_path(project_name)
     )
 
-    repo_root = _repo_root()
-    if project_path == repo_root or repo_root in project_path.parents:
-        raise SystemExit(
-            f"Refusing to generate into the template repo itself ({project_path})."
-        )
+    templates_dir = templates_root()
+    forbidden_roots = [templates_dir]
+    checkout = source_checkout_root()
+    if checkout is not None:
+        forbidden_roots.append(checkout)
+    for root in forbidden_roots:
+        if project_path == root or root in project_path.parents:
+            raise SystemExit(
+                f"Refusing to generate into the template repo itself ({project_path})."
+            )
 
     package_name = derive_package_name(project_name)
     class_name = derive_class_name(project_name)
@@ -173,17 +182,16 @@ def main(argv: list[str] | None = None) -> int:
 
     file_writer = FileWriter(mode=_select_mode(args))
     git_initializer = GitInitializer()
-    templates_root = repo_root / "templates"
 
     generator = ProjectGenerator(
         setup_path=setup_path,
         file_writer=file_writer,
         git_initializer=git_initializer,
-        templates_root=templates_root,
+        templates_root=templates_dir,
     )
 
     print(f"Generating {args.path_type} project '{project_name}' at {project_path}")
-    print(f"Templates root: {templates_root}")
+    print(f"Templates root: {templates_dir}")
     print(f"Stack: {args.stack} (test-cmd: {test_cmd!r})")
     print()
 
