@@ -30,8 +30,11 @@ jobs:
       - uses: actions/checkout@v4
       # Only the scripts this repo authors. mvnw/gradlew are vendored
       # upstream wrappers and are deliberately not linted.
+      # -P SCRIPTDIR resolves the sourced phase2-lib.sh relative to the
+      # script's own directory, which holds in this repo and in scaffolded
+      # projects alike.
       - name: shellcheck phase2 scripts
-        run: shellcheck -x src/nimbus_tiers/templates/phase2*.sh
+        run: shellcheck -x -P SCRIPTDIR src/nimbus_tiers/templates/phase2*.sh
 
   package:
     name: wheel builds and installs cleanly

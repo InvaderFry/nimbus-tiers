@@ -13,18 +13,19 @@ from nimbus_tiers.resources import templates_root
 
 TEMPLATES_ROOT = templates_root()
 PHASE2_PATH = TEMPLATES_ROOT / "phase2.sh"
+LIB_PATH = TEMPLATES_ROOT / "phase2-lib.sh"
 
 
-def _extract_jvm_dotted_dir_re() -> str:
-    """Pull the single-quoted _JVM_DOTTED_DIR_RE value out of phase2.sh.
-
-    Testing the real regex string (rather than a copy) means this test fails if
-    the script's pattern drifts away from the behavior asserted below.
-    """
+def test_phase2_sources_the_lib_before_first_use() -> None:
+    """phase2.sh must source phase2-lib.sh (with a hard error when missing)
+    before the lock section, which calls get_proc_start_time."""
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^_JVM_DOTTED_DIR_RE='([^']*)'", text, flags=re.MULTILINE)
-    assert m, "_JVM_DOTTED_DIR_RE assignment not found in phase2.sh"
-    return m.group(1)
+    source_idx = text.index("phase2-lib.sh")
+    first_use_idx = text.index("get_proc_start_time")
+    assert source_idx < first_use_idx, "lib must be sourced before its first use"
+    assert "phase2-lib.sh not found next to phase2.sh" in text, (
+        "a missing lib must be a clear fatal error, not a cryptic bash failure"
+    )
 
 
 def test_malformed_path_guard_covers_dotted_jvm_dirs() -> None:
@@ -33,19 +34,24 @@ def test_malformed_path_guard_covers_dotted_jvm_dirs() -> None:
     The pre-existing guard only matched the literal '**' artifact; neither
     reported failure path contained '**', so they slipped through to a generic
     'planned file missing' rejection. Both arms must now use the JVM
-    package-as-directory pattern. Rather than count occurrences (brittle to
-    benign refactors), assert each arm by its distinct, behavior-bearing text:
-    the pre-Aider arm's per-path WARN and the post-Aider arm's explanation.
+    package-as-directory pattern (behavior tests live in test_phase2_lib.py).
+    Rather than count occurrences (brittle to benign refactors), assert each
+    arm by its distinct, behavior-bearing text: the pre-Aider arm's per-path
+    WARN and the post-Aider arm's explanation.
     """
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    assert re.search(r"^_JVM_DOTTED_DIR_RE=", text, flags=re.MULTILINE), (
-        "phase2.sh missing _JVM_DOTTED_DIR_RE definition"
+    # Pre-Aider planned-path skip (via the lib wrapper).
+    assert "nimbus_is_malformed_jvm_path" in text, (
+        "pre-Aider guard must use the lib's malformed-path check"
     )
-    # Pre-Aider planned-path skip.
     assert "skipping planned path with a dotted/parenthesised directory" in text, (
         "pre-Aider guard should skip malformed planned paths with a clear WARN"
     )
-    # Post-Aider working-tree guard.
+    # Post-Aider working-tree guard greps captured status output with the raw
+    # regex variable (also defined in the lib).
+    assert 'grep -E "$_JVM_DOTTED_DIR_RE"' in text, (
+        "post-Aider guard must grep the working tree with the shared regex"
+    )
     assert "package-name-as-directory" in text, (
         "post-Aider guard should explain the package-name-as-directory bug"
     )
@@ -55,24 +61,6 @@ def test_malformed_path_guard_covers_dotted_jvm_dirs() -> None:
         "post-Aider guard must use --untracked-files=all so a greenfield "
         "malformed dir is not hidden by porcelain's untracked-tree collapse"
     )
-
-
-MALFORMED = [
-    "src/main/java/com.example/app0501/Foo.java",
-    "src/main/java(com.example.app0501)/Foo.java",
-    " M src/test/java/com.example/Bar.java",
-    "?? src/main/kotlin/com.acme/X.kt",
-    "?? src/main/java/com.example/",
-]
-
-VALID = [
-    "src/main/java/com/example/app0501/Foo.java",
-    " M src/test/java/com/example/app0501/FooTest.java",
-    "src/main/resources/application.properties",
-    "pom.xml",
-    "src/main/java/com/example/Foo.Bar.java",  # dotted filename, not a dir
-    "?? src/main/java/com/example/app0501/",
-]
 
 
 def _grep_matches(regex: str, line: str) -> bool:
@@ -93,27 +81,7 @@ def _grep_matches(regex: str, line: str) -> bool:
     return result.returncode == 0
 
 
-@pytest.mark.parametrize("path", MALFORMED)
-def test_regex_flags_malformed_jvm_paths(path: str) -> None:
-    regex = _extract_jvm_dotted_dir_re()
-    assert _grep_matches(regex, path), f"guard should flag malformed path: {path!r}"
-
-
-@pytest.mark.parametrize("path", VALID)
-def test_regex_allows_valid_paths(path: str) -> None:
-    regex = _extract_jvm_dotted_dir_re()
-    assert not _grep_matches(regex, path), f"guard should not flag valid path: {path!r}"
-
-
 # ----- context-length preflight ----------------------------------------------
-
-
-def _extract_max_seq_len_re() -> str:
-    """Pull the max_seq_len grep -oE pattern out of phase2.sh."""
-    text = PHASE2_PATH.read_text(encoding="utf-8")
-    m = re.search(r"grep -oE '(\"max_seq_len\"[^']*)'", text)
-    assert m, "max_seq_len extraction pattern not found in phase2.sh"
-    return m.group(1)
 
 
 def test_preflight_enforces_context_length_floor() -> None:
@@ -127,27 +95,13 @@ def test_preflight_enforces_context_length_floor() -> None:
     )
 
 
-def test_max_seq_len_pattern_parses_tabbyapi_model_card() -> None:
-    regex = _extract_max_seq_len_re()
-    tabby_card = (
-        '{"id":"Qwen2.5-Coder-14B-Instruct-exl3-6.0bpw","object":"model",'
-        '"parameters":{"max_seq_len": 32768,"cache_size":32768}}'
+def test_max_seq_len_extraction_is_wired_into_preflight() -> None:
+    """The model-card parse must go through the lib's nimbus_max_seq_len
+    (payload behavior is tested in test_phase2_lib.py)."""
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "nimbus_max_seq_len" in text, (
+        "preflight must parse the model card via the lib function"
     )
-    result = subprocess.run(
-        ["grep", "-oE", regex], input=tabby_card, text=True, capture_output=True
-    )
-    assert result.returncode == 0, "pattern should match a TabbyAPI model card"
-    digits = re.sub(r"\D", "", result.stdout.splitlines()[0])
-    assert digits == "32768"
-
-
-def test_max_seq_len_pattern_ignores_foreign_payloads() -> None:
-    regex = _extract_max_seq_len_re()
-    vllm_models = '{"object":"list","data":[{"id":"foo","max_model_len":8192}]}'
-    result = subprocess.run(
-        ["grep", "-qE", regex], input=vllm_models, text=True
-    )
-    assert result.returncode == 1, "pattern must not match non-TabbyAPI payloads"
 
 
 # ----- automatic fallback model -----------------------------------------------
@@ -245,20 +199,10 @@ def test_gitignore_required_entries_guard_present() -> None:
     """
     text = PHASE2_PATH.read_text(encoding="utf-8")
     assert "_repair_gitignore() {" in text, "phase2.sh missing _repair_gitignore"
-    assert 'grep -qxF -- "$1" .gitignore' in text, (
-        "repair guard must whole-line literal-match each required entry"
-    )
-    # Negations are order-dependent (last matching rule wins): when the
-    # `.aider*` glob is missing, the whole ordered glob+negations block must be
-    # re-appended even if the negations survived — appending the glob alone
-    # after them would re-ignore both config files.
-    assert re.search(
-        r"if ! _gitignore_has '\.aider\*'; then\s*\n\s*"
-        r"_append\+=\('\.aider\*' '!\.aider\.conf\.yml' '!\.aiderignore'\)",
-        text,
-    ), "a missing .aider* glob must re-append the full ordered glob+negations block"
-    assert "_gitignore_has 'plans/*.log'" in text, (
-        "repair guard must cover the plans/*.log rule"
+    assert "nimbus_missing_gitignore_entries" in text, (
+        "repair guard must compute missing entries via the lib (whole-line "
+        "literal matching and the ordered glob+negations block are behavior-"
+        "tested in test_phase2_lib.py)"
     )
 
 
@@ -334,74 +278,31 @@ def test_java_helpers_capture_real_wait_status(helper: Path) -> None:
     )
 
 
-def _extract_gate_lint_re() -> str:
-    text = PHASE2_PATH.read_text(encoding="utf-8")
-    m = re.search(r"grep -qE '([^']*wait[^']*)' verify\.sh", text)
-    assert m, "gate-integrity lint pattern not found in phase2.sh"
-    return m.group(1)
-
-
 def test_gate_lint_rejects_exit_swallowing_verify() -> None:
     """phase2.sh must refuse to run a verify.sh containing `if ! wait`.
 
     Already-generated projects keep their buggy verify.sh even after the
     helper templates are fixed; the lint stops them from recording false
-    DONEs until the gate is repaired.
+    DONEs until the gate is repaired. Pattern behavior (buggy vs correct vs
+    warning-comment lines) is tested against the lib function in
+    test_phase2_lib.py; here we assert the lint is wired into the run.
     """
-    regex = _extract_gate_lint_re()
-    assert _grep_matches(regex, 'if ! wait "$mvn_pid"; then'), (
-        "lint must match the buggy `if ! wait` pattern"
+    text = PHASE2_PATH.read_text(encoding="utf-8")
+    assert "nimbus_gate_swallows_exit verify.sh" in text, (
+        "gate-integrity lint must run against verify.sh via the lib function"
     )
-    assert _grep_matches(regex, '  if ! wait "$gradle_pid"; then'), (
-        "lint must match the buggy pattern on an indented code line"
-    )
-    assert not _grep_matches(regex, 'wait "$mvn_pid" || mvn_status=$?'), (
-        "lint must not flag the correct `wait || status=$?` capture"
-    )
-    # The fixed JVM helpers warn against the pattern in bash comments that a
-    # correctly generated verify.sh copies verbatim. The lint is anchored to
-    # the start of an executable line so the good gate is not rejected.
-    assert not _grep_matches(
-        regex,
-        '  # Capture wait\'s REAL exit status. Do NOT write `if ! wait "$pid"; then',
-    ), "lint must not flag the helper's warning comment"
 
 
 # ----- build-file coordinate corruption (0609 Java step01) ----------------------
 
 
-def _extract_coord_corruption_re() -> str:
+def test_coord_guard_is_wired_into_the_run() -> None:
+    """The coordinate-corruption guard must inspect touched build files via
+    the lib checker (pattern behavior is tested in test_phase2_lib.py)."""
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    m = re.search(r"^_BUILD_COORD_CORRUPTION_RE='([^']*)'", text, flags=re.MULTILINE)
-    assert m, "_BUILD_COORD_CORRUPTION_RE assignment not found in phase2.sh"
-    return m.group(1)
-
-
-CORRUPTED_COORDS = [
-    "<artifactId>spring-boot-starters-parent</artifactId>",
-    "<artifactId>spring-boot-started-web</artifactId>",
-    'implementation "org.springframework.boot:spring-boot-started-test"',
-]
-
-VALID_COORDS = [
-    "<artifactId>spring-boot-starter-parent</artifactId>",
-    "<artifactId>spring-boot-starter-web</artifactId>",
-    "<artifactId>spring-boot-starter-test</artifactId>",
-    "<artifactId>spring-boot-starter</artifactId>",
-    "<artifactId>spring-boot-maven-plugin</artifactId>",
-]
-
-
-@pytest.mark.parametrize("line", CORRUPTED_COORDS)
-def test_coord_guard_flags_corrupted_coordinates(line: str) -> None:
-    regex = _extract_coord_corruption_re()
-    assert _grep_matches(regex, line), f"guard should flag corrupted coordinate: {line!r}"
-
-
-@pytest.mark.parametrize("line", VALID_COORDS)
-def test_coord_guard_allows_valid_coordinates(line: str) -> None:
-    regex = _extract_coord_corruption_re()
-    assert not _grep_matches(regex, line), f"guard must not flag valid coordinate: {line!r}"
+    assert "nimbus_has_corrupt_build_coords" in text, (
+        "coordinate-corruption guard must use the lib checker"
+    )
 
 
 def test_build_files_are_never_whole_safe() -> None:
@@ -410,11 +311,12 @@ def test_build_files_are_never_whole_safe() -> None:
     The 0609 corruption happened because the 40-line scaffold pom.xml was
     under the whole-file threshold, so the model regenerated the ENTIRE file
     — re-emitting (and mangling) every coordinate. Diff edits only touch the
-    lines the step adds.
+    lines the step adds. The build-file name matching is behavior-tested in
+    test_phase2_lib.py (nimbus_is_build_file).
     """
     text = PHASE2_PATH.read_text(encoding="utf-8")
-    assert "pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts" in text, (
-        "whole-format safety check must special-case JVM build files"
+    assert "nimbus_is_build_file" in text, (
+        "whole-format safety check must special-case JVM build files via the lib"
     )
     assert "Existing build file" in text and "diff edit format" in text, (
         "the build-file diff fallback must be reported in the step log"
@@ -503,6 +405,11 @@ def test_e2e_no_change_run_never_records_done(tmp_path: Path) -> None:
     phase2 = repo / "phase2.sh"
     phase2.write_text(PHASE2_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     phase2.chmod(0o755)
+    # phase2.sh refuses to run without its helper library alongside it —
+    # scaffolded projects always get both files.
+    (repo / "phase2-lib.sh").write_text(
+        LIB_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "t@t")

@@ -74,6 +74,7 @@ def test_paths_share_the_common_skeleton(path_cls: type[StackScaffoldPath]) -> N
         Path("NIMBUS_GUIDE.md"),
         Path("PHASE1_SPEC.md"),
         Path("phase2.sh"),
+        Path("phase2-lib.sh"),
         Path(".aider.conf.yml"),
         Path(".aiderignore"),
         Path(".gitignore"),

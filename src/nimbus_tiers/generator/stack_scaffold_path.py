@@ -43,6 +43,7 @@ class StackScaffoldPath(SetupPath):
             ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
             ("PHASE1_SPEC.md", "PHASE1_SPEC.md"),
             ("phase2.sh", "phase2.sh"),
+            ("phase2-lib.sh", "phase2-lib.sh"),
             (f"paths/{self.name}/.aider.conf.yml", ".aider.conf.yml"),
             (".aiderignore", ".aiderignore"),
             (".gitignore", ".gitignore"),

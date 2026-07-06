@@ -9,18 +9,23 @@
 #   2  step halted intentionally (plans/halt-stepNN.md written) — review halt report
 set -euo pipefail
 
+# Pure helpers (path parsing, guard regexes, log classifiers) live in
+# phase2-lib.sh so they can be unit-tested in isolation. Both files are
+# scaffolded together by nimbus-tiers and must stay side by side.
+_PHASE2_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [ ! -f "${_PHASE2_DIR}/phase2-lib.sh" ]; then
+    echo "ERROR: phase2-lib.sh not found next to phase2.sh (looked in ${_PHASE2_DIR})." >&2
+    echo "       The two files ship together — restore it from the nimbus-tiers template or git history." >&2
+    exit 1
+fi
+# shellcheck source=phase2-lib.sh
+. "${_PHASE2_DIR}/phase2-lib.sh"
+
 # Single-run guard: prevent concurrent phase2.sh executions in the same repo.
 # A second run can race bookkeeping and produce confusing sentinel recovery.
 LOCK_DIR=".git/phase2.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
 LOCK_START_FILE="${LOCK_DIR}/starttime"
-get_proc_start_time() {
-    # Linux procfs start time (clock ticks since boot), field 22 in /proc/<pid>/stat.
-    # Empty output means unavailable (non-Linux, vanished process, or inaccessible procfs).
-    local pid="$1"
-    [ -r "/proc/${pid}/stat" ] || return 1
-    awk '{print $22}' "/proc/${pid}/stat" 2>/dev/null || return 1
-}
 if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_PID_FILE"
     get_proc_start_time "$$" > "$LOCK_START_FILE" 2>/dev/null || true
@@ -154,20 +159,7 @@ if [ -n "$_BRANCH_REASON" ]; then
     exit 1
 fi
 
-NEXT=$(python3 -c "
-import re, os
-done = set()
-if os.path.exists('CompletedSteps.md'):
-    with open('CompletedSteps.md') as f:
-        for line in f:
-            m = re.search(r'Step (\d+): DONE', line)
-            if m:
-                done.add(int(m.group(1)))
-n = 1
-while n in done:
-    n += 1
-print(n)
-")
+NEXT=$(nimbus_next_step)
 
 STEP_PAD=$(printf '%02d' "$NEXT")
 STEP_FILE="plans/step${STEP_PAD}.md"
@@ -305,28 +297,16 @@ _mark_step_failed() {
 # untracked files that trip the dirty-tree guard on later runs; losing `.aider*`
 # invites Aider's startup rewrite to dirty the tree on every run. Re-append what
 # is missing so one bad edit cannot wedge the pipeline; the repaired file is
-# committed with the step, so Phase 3 review still sees the diff. grep -x
-# matches whole lines and -F literal text: a commented-out or glued-onto-
-# another-line variant counts as missing and gets a clean rule line. Idempotent
+# committed with the step, so Phase 3 review still sees the diff. The missing-
+# entry computation (whole-line literal matching, ordered glob+negations block)
+# lives in phase2-lib.sh: nimbus_missing_gitignore_entries. Idempotent
 # (a repaired file needs nothing on the next call), so it is safe to invoke
 # from both the post-Aider and the recovery paths.
-_gitignore_has() {
-    grep -qxF -- "$1" .gitignore 2>/dev/null
-}
 _repair_gitignore() {
     local _append=() _gi
-    # .gitignore negations are order-dependent: `!.aider.conf.yml` and
-    # `!.aiderignore` only re-include the files if they appear AFTER the
-    # `.aider*` glob they carve out of. So when the glob line is missing, the
-    # whole ordered block is re-appended even if the negations survived —
-    # appending `.aider*` alone after them would re-ignore both config files.
-    if ! _gitignore_has '.aider*'; then
-        _append+=('.aider*' '!.aider.conf.yml' '!.aiderignore')
-    else
-        _gitignore_has '!.aider.conf.yml' || _append+=('!.aider.conf.yml')
-        _gitignore_has '!.aiderignore'    || _append+=('!.aiderignore')
-    fi
-    _gitignore_has 'plans/*.log' || _append+=('plans/*.log')
+    while IFS= read -r _gi; do
+        [ -n "$_gi" ] && _append+=("$_gi")
+    done < <(nimbus_missing_gitignore_entries)
     if [ "${#_append[@]}" -eq 0 ]; then
         return 0
     fi
@@ -391,15 +371,8 @@ fi
 # ── Preflight: fail fast if the model endpoint / API key is unavailable ───────
 # Derive model from env first, then from .aider.conf.yml so the check works
 # whether the user sets AIDER_MODEL or relies on the config file.
-# See NIMBUS_GUIDE.md "Aider config note" for the .aider.conf.yml subset
-# this reader supports.
-_read_aider_conf_scalar() {
-    [ -f ".aider.conf.yml" ] || return 0
-    grep -m1 "^$1:" .aider.conf.yml 2>/dev/null \
-        | sed "s/^$1:[[:space:]]*//" \
-        | tr -d '"'"'" || true
-}
-
+# _read_aider_conf_scalar (phase2-lib.sh) supports the flat YAML subset the
+# template config uses — see NIMBUS_GUIDE.md "Aider config note".
 _PREFLIGHT_MODEL="${AIDER_MODEL:-}"
 [ -z "$_PREFLIGHT_MODEL" ] && _PREFLIGHT_MODEL=$(_read_aider_conf_scalar model)
 # A fallback run talks to the fallback provider, not the local server — point
@@ -508,9 +481,7 @@ if [ -n "$_PREFLIGHT_MODEL" ]; then
                     set -e
                     if [ "$_CARD_RC" -eq 0 ] && [ -n "$_MODEL_CARD" ]; then
                         set +e
-                        _MAX_SEQ_LEN=$(printf '%s' "$_MODEL_CARD" \
-                            | grep -oE '"max_seq_len"[[:space:]]*:[[:space:]]*[0-9]+' \
-                            | head -n1 | tr -cd '0-9')
+                        _MAX_SEQ_LEN=$(printf '%s' "$_MODEL_CARD" | nimbus_max_seq_len)
                         set -e
                         if [ -n "$_MAX_SEQ_LEN" ]; then
                             logf "==> Served context length (max_seq_len): ${_MAX_SEQ_LEN}"
@@ -601,17 +572,13 @@ if [ ! -f "$WIP_FILE" ]; then
 fi
 
 # Gate-integrity lint: refuse to trust a verify.sh containing the known
-# exit-code-swallowing pattern `if ! wait "$pid"; then status=$?`. Inside that
-# branch $? holds the status of the NEGATED test (always 0), so every build
-# failure reports success and a broken step gets committed as DONE (observed:
-# a pom.xml with non-resolving coordinates shipped as a "passing" step).
-# Capture the real status instead: `wait "$pid" || status=$?`. This lints the
-# one pattern that has actually shipped; verify.sh authorship rules live in
-# PHASE1_SPEC §4. The regex is anchored to the start of an executable line on
-# purpose: the helper templates warn against this exact pattern in comments
-# that a correctly generated verify.sh copies verbatim, and an unanchored
-# match would reject the good gate along with the bad one.
-if [ -f verify.sh ] && grep -qE '^[[:space:]]*if[[:space:]]+![[:space:]]+wait\b' verify.sh; then
+# exit-code-swallowing pattern `if ! wait "$pid"; then status=$?` — every
+# build failure would report success and a broken step gets committed as DONE
+# (observed: a pom.xml with non-resolving coordinates shipped as a "passing"
+# step). This lints the one pattern that has actually shipped; verify.sh
+# authorship rules live in PHASE1_SPEC §4. Detection semantics are documented
+# with nimbus_gate_swallows_exit in phase2-lib.sh.
+if [ -f verify.sh ] && nimbus_gate_swallows_exit verify.sh; then
     logf_err "==> ERROR: verify.sh contains an 'if ! wait ...' status check, which swallows the" \
              "    build's real exit code (inside that branch \$? is the status of the negated" \
              "    test — always 0). The gate is non-authoritative: failing builds would be" \
@@ -658,45 +625,11 @@ if [ -f "$WIP_FILE" ]; then
     fi
 fi
 
-# Extended regex matching a malformed JVM source path. Java/Kotlin/Scala/Groovy
-# package names map to directories by replacing each `.` with `/`, so a
-# legitimate source *directory* never contains a `.` or `()`. Two forms of the
-# canonical local-model layout bug are caught:
-#   1. A dotted directory component under a source root, e.g.
-#      `src/main/java/com.example/Foo.java` — the first alternative matches a
-#      `.`-bearing component that is FOLLOWED BY A SLASH (so it is a directory).
-#      The final filename (`Foo.java`, no trailing slash) is therefore never
-#      flagged, and a legitimately dotted filename like `Foo.Bar.java` is safe.
-#   2. A parenthesised source root, e.g. `src/main/java(com.example.app)/...` —
-#      the second alternative matches the lang dir immediately followed by `(`.
-# Match against RAW paths (do not append a trailing slash, which would make the
-# final filename look like a directory and false-positive every valid path).
-# Shared by the pre-Aider planned-path check and the post-Aider working-tree
-# guard so both use one definition.
-_JVM_DOTTED_DIR_RE='(src/(main|test)/(java|kotlin|scala|groovy)/([^/]*/)*[^/]*\.[^/]*/)|(src/(main|test)/(java|kotlin|scala|groovy)\()'
-
-# Parse a path entry from a "## Files to change" list item in a step file.
-# Strips the leading "- " marker, any remaining leading whitespace (handles the
-# double-space typo '- ⎵⎵src/...'), a trailing "(annotation)" suffix, and one
-# layer of `/"/' wrapping. Called from both the FILE_ARGS setup below and the
-# planned-file existence guard; defined here so both uses share the same parser
-# regardless of the SKIP_AIDER path.
-_strip_md_path() {
-    local p="${1#- }"
-    # Strip any leading whitespace left after removing the "- " prefix.
-    # Without this, '- ⎵⎵src/Foo.java' (double space) leaves ' src/Foo.java'
-    # which the embedded-space guard would silently skip rather than check.
-    p="${p#"${p%%[![:space:]]*}"}"
-    # Strip trailing annotation: shortest-match " (*" removes only the trailing
-    # " (note)" suffix. Using % not %% avoids truncating at the first ( in a
-    # directory component (e.g. com/example(v1)/Foo.java is left intact).
-    p="${p% (*}"
-    p="${p%"${p##*[![:space:]]}"}"
-    p="${p#\`}"; p="${p%\`}"
-    p="${p#\"}"; p="${p%\"}"
-    p="${p#\'}"; p="${p%\'}"
-    printf '%s' "$p"
-}
+# The malformed-JVM-path regex (_JVM_DOTTED_DIR_RE) and the "## Files to
+# change" list parser (_strip_md_path, nimbus_planned_entries) live in
+# phase2-lib.sh — shared by the pre-Aider planned-path check, the post-Aider
+# working-tree guard, the existence guard, and the artifact scrubber, so all
+# uses share one definition.
 
 if [ "$SKIP_AIDER" = false ]; then
     # Pass each planned path as --file so Aider edits a real on-disk target
@@ -750,7 +683,7 @@ if [ "$SKIP_AIDER" = false ]; then
         # Count the rejection separately from PARSED_COUNT so the post-loop
         # messaging can say "malformed" rather than the misleading "no entries
         # parsed" when a malformed path is the only thing listed.
-        if printf '%s' "$path" | grep -qE "$_JVM_DOTTED_DIR_RE"; then
+        if nimbus_is_malformed_jvm_path "$path"; then
             logf_err "==> WARN: skipping planned path with a dotted/parenthesised directory under a JVM source root (package-name-as-directory bug?): $path" \
                      "    A Java/Kotlin package maps to directories by replacing '.' with '/': com.example.app -> com/example/app."
             _MALFORMED_PLANNED=$((_MALFORMED_PLANNED + 1))
@@ -783,7 +716,7 @@ if [ "$SKIP_AIDER" = false ]; then
                     ;;
             esac
         fi
-    done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+    done < <(nimbus_planned_entries "$STEP_FILE")
 
     if [ "$PARSED_COUNT" -eq 0 ] && [ "$_MALFORMED_PLANNED" -gt 0 ]; then
         logf_err "==> WARN: every path in '## Files to change' in $STEP_FILE was rejected as a" \
@@ -847,19 +780,15 @@ if [ "$SKIP_AIDER" = false ]; then
         _whole_safe=false
     fi
     for _et in ${_EXISTING_TARGETS[@]+"${_EXISTING_TARGETS[@]}"}; do
-        # An existing build file is never whole-safe regardless of size:
-        # dependency coordinates are verbatim identifiers, and whole-format
-        # regeneration makes the model re-emit every one of them — the
-        # observed corruption vector (a 40-line pom.xml regenerated in full
-        # with spring-boot-starter-parent mangled to spring-boot-starters-parent).
-        # A diff edit only touches the lines the step adds.
-        case "${_et##*/}" in
-            pom.xml|build.gradle|build.gradle.kts|settings.gradle|settings.gradle.kts)
-                _whole_safe=false
-                _buildfile_target="$_et"
-                break
-                ;;
-        esac
+        # An existing build file is never whole-safe regardless of size — the
+        # observed corruption vector is whole-format regeneration re-emitting
+        # (and mangling) dependency coordinates. See nimbus_is_build_file in
+        # phase2-lib.sh.
+        if nimbus_is_build_file "$_et"; then
+            _whole_safe=false
+            _buildfile_target="$_et"
+            break
+        fi
         # wc -l counts newlines, so a final line without a trailing newline is
         # uncounted — the count is a lower bound, which is fine for a threshold.
         _lc=$(wc -l < "$_et" 2>/dev/null | tr -cd '0-9')
@@ -1045,7 +974,7 @@ if [ "$SKIP_AIDER" = false ]; then
     #
     # Classify the two cases and give guidance that matches the actual cause.
     if [ -f "$LOG_FILE" ]; then
-        if grep -qiE "(context\.length exceeded|maximum context length|input is too long|KV cache is full|Prompt is too long|Prompt exceeds context|context overflow)" "$LOG_FILE" 2>/dev/null; then
+        if nimbus_log_input_overflow "$LOG_FILE"; then
             logf "==> INPUT exceeded the model's context window — step $NEXT NOT recorded." \
                  "    The prompt (CONTEXT.md + step file + target files) was too large to fit." \
                  "    Inspect $LOG_FILE. Reduce CONTEXT.md, shorten this step's 'Files to change' list, or raise max_seq_len/cache_size on the inference server."
@@ -1054,10 +983,10 @@ if [ "$SKIP_AIDER" = false ]; then
             rm -f "$WIP_FILE"
             exit 1
         fi
-        if grep -qiE "(has hit a token limit|token limit exceeded|n_predict tokens limit|finish_reason.{0,12}length)" "$LOG_FILE" 2>/dev/null; then
+        if nimbus_log_token_limit "$LOG_FILE"; then
             # Did a single non-trivial line dominate the output? If so the model
             # looped and the cap merely terminated it — quality, not size.
-            _rep=$(awk 'length > 10' "$LOG_FILE" 2>/dev/null | sort | uniq -c | sort -rn | awk 'NR==1{print $1; exit}')
+            _rep=$(nimbus_log_max_total_repeat "$LOG_FILE")
             if [ "${_rep:-0}" -ge "$WATCHDOG_MAX" ]; then
                 logf "==> OUTPUT truncated at the token cap AFTER a degenerate repetition loop (a line repeated ${_rep}×) — step $NEXT NOT recorded." \
                      "    This is a model/cache QUALITY failure, not a size problem: the model looped on repeated/garbage lines and the max_tokens cap ended it." \
@@ -1085,19 +1014,10 @@ if [ "$SKIP_AIDER" = false ]; then
     # Note: the pipeline exits 0 on an empty log (each stage succeeds with no output),
     # so _repeat_max will be empty rather than "0" — the :-0 default handles that.
     if [ -f "$LOG_FILE" ]; then
-        # Match the live watchdog's semantics: strip trailing whitespace before
-        # the trivial-line filter (Aider pads log lines to terminal width, so a
-        # blank diff line becomes "+" plus spaces and would otherwise pass
-        # length>10) and count the longest run of CONSECUTIVE identical lines
-        # rather than total occurrences. Total-occurrence counting falsely fires
-        # on lines that legitimately recur across a file (blank lines, closing
-        # braces, the same mock-setup line in every test).
-        _repeat_max=$(awk '
-            { s=$0; sub(/[ \t]+$/,"",s)
-              if (length(s) <= 10) { prev=""; run=0; next }
-              if (s==prev) run++; else { prev=s; run=1 }
-              if (run>max) max=run }
-            END { print max+0 }' "$LOG_FILE" 2>/dev/null)
+        # Match the live watchdog's semantics: longest run of CONSECUTIVE
+        # identical non-trivial lines, not total occurrences — see
+        # nimbus_log_max_repeat in phase2-lib.sh for why.
+        _repeat_max=$(nimbus_log_max_repeat "$LOG_FILE")
         if [ "${_repeat_max:-0}" -ge "$WATCHDOG_MAX" ]; then
             logf "==> Degenerate model output detected (a line repeated ${_repeat_max}× in log) — step $NEXT NOT recorded." \
                  "    The local model likely looped generating the same tokens until the inference server aborted." \
@@ -1270,21 +1190,18 @@ fi
 
 # Build-file coordinate-corruption guard: when a local model regenerates
 # pom.xml / build.gradle it can corrupt well-known coordinates by a few
-# characters (observed: spring-boot-starter-parent -> spring-boot-starters-parent,
-# spring-boot-starter-* -> spring-boot-started-*). Those near-miss names
-# resolve to nothing, but only a CORRECT verify.sh catches that — and a buggy
-# generated gate is exactly how one such pom shipped as a "passing" step. This
-# static guard rejects the known corruption class before verify.sh ever runs,
-# independent of the generated gate's quality. Only build files touched THIS
-# run are inspected; pre-existing content is not this step's responsibility.
-# `spring-boot-start(ed|ers)` matches the corruptions but not the legitimate
-# `spring-boot-starter*` names ('er' is neither 'ed' nor 'ers' at that offset).
-_BUILD_COORD_CORRUPTION_RE='spring-boot-start(ed|ers)'
+# characters. Those near-miss names resolve to nothing, but only a CORRECT
+# verify.sh catches that — and a buggy generated gate is exactly how one such
+# pom shipped as a "passing" step. This static guard rejects the known
+# corruption class (see _BUILD_COORD_CORRUPTION_RE in phase2-lib.sh) before
+# verify.sh ever runs, independent of the generated gate's quality. Only build
+# files touched THIS run are inspected; pre-existing content is not this
+# step's responsibility.
 _CORRUPT_BUILD_FILES=()
 for _bf in pom.xml build.gradle build.gradle.kts settings.gradle settings.gradle.kts; do
     [ -f "$_bf" ] || continue
     [ -n "$(git status --porcelain -- "$_bf" 2>/dev/null)" ] || continue
-    if grep -qE "$_BUILD_COORD_CORRUPTION_RE" "$_bf"; then
+    if nimbus_has_corrupt_build_coords "$_bf"; then
         _CORRUPT_BUILD_FILES+=("$_bf")
     fi
 done
@@ -1315,7 +1232,7 @@ while IFS= read -r _pf; do
     [ -z "$_ppath" ] && continue
     case "$_ppath" in *" "*) continue ;; esac
     [ -e "$_ppath" ] || _MISSING_PLANNED+=("$_ppath")
-done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+done < <(nimbus_planned_entries "$STEP_FILE")
 if [ "${#_MISSING_PLANNED[@]}" -gt 0 ]; then
     logf "==> ERROR: planned file(s) missing — step $NEXT NOT recorded."
     for _m in "${_MISSING_PLANNED[@]}"; do logf "    missing: $_m"; done
@@ -1379,7 +1296,7 @@ while IFS= read -r _pf; do
     else
         rm -f "$_tmp"
     fi
-done < <(awk '/^## Files to change/{found=1; next} found && /^##/{exit} found && /^- /{print}' "$STEP_FILE")
+done < <(nimbus_planned_entries "$STEP_FILE")
 if [ "${#_SCRUBBED[@]}" -gt 0 ]; then
     logf "==> Scrubbed model artifact line(s) from source files before verify.sh:"
     for _s in "${_SCRUBBED[@]}"; do logf "    $_s"; done
