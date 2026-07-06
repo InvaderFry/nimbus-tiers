@@ -41,8 +41,15 @@ package-dir = { "" = "src" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The templates tree lives inside the package so wheels ship it. The dotfile
+# patterns are required: glob's `*` does not match a leading dot, and the
+# templates include .aider.conf.yml, .aiderignore, and .gitignore.
 [tool.setuptools.package-data]
-"nimbus_tiers" = ["../../templates/**/*"]
+"nimbus_tiers" = [
+    "templates/**/*",
+    "templates/.*",
+    "templates/**/.*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

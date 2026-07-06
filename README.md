@@ -6,7 +6,7 @@ A template repository for the **Hybrid AI Coding Architecture** (Plan → Execut
 
 Two stdlib-only Python CLIs:
 
-- **`generateNewProject.py`** — creates a new project folder *one directory above this repo*, copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `NIMBUS_GUIDE.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
+- **`generateNewProject.py`** — creates a new project folder *one directory above this repo* (or under the current directory when running the installed `nimbus-generate`), copies template files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.aiderignore`, `.gitignore`, `plans/`, `logs/`, `docs/architecture.md`, `NIMBUS_GUIDE.md`) into it, then runs `git init` + an initial commit. Idempotent: existing files are skipped by default.
 - **`setupEnvironment.py`** — checks the host machine for the runtime stack required by Path C (Full Hybrid: NVIDIA driver, Ollama, TabbyAPI/ExLlamaV3, Aider, Claude Code, env vars). Prompts before installing or modifying anything.
 
 ## Step-by-step: from zero to first coding session
@@ -119,6 +119,8 @@ They run **identical code**. `generateNewProject.py` is a thin shim that imports
 
 **Use `nimbus-generate`** when you want a global command so you don't have to `cd` back into the nimbus-tiers repo each time you scaffold a new project. The same applies to `nimbus-setup` vs `python3 setupEnvironment.py`.
 
+One behavioral difference: the **default destination** depends on how you run it. From a source checkout the new project is created *one directory above the repo* (as documented in the quick start). From an installed package (`pipx install .` — there is no repo to be a sibling of) it is created *under the current working directory*. Pass `--path` to choose explicitly in either mode. The templates ship inside the package (`nimbus_tiers/templates/`), so the installed commands work from anywhere.
+
 ---
 
 ## Quick start
@@ -162,13 +164,23 @@ If you see `error: externally-managed-environment` from pip, that's PEP 668. Use
 
 ## Setup paths
 
-The architecture defines three setup paths. This repo currently implements **Path C (Full Hybrid)** end-to-end. Paths A and B are scaffolded as OOP extension points so they can be added later without restructuring:
+The architecture defines three setup paths. All three are implemented; they share the same project skeleton (`phase2.sh`, `PHASE1_SPEC.md`, stack starters, …) and differ in the Aider executor config (`.aider.conf.yml`) that gets copied in, plus which tools `setupEnvironment.py` checks for. Select one with `--path-type` on either CLI (default: `full-hybrid`):
 
-| Path | Description | Status |
-|---|---|---|
-| A — Cloud-Only | Groq + Claude/ChatGPT subscriptions, no local models | Stub (raises `NotImplementedError`) |
-| B — Light Local | Ollama only, no TabbyAPI | Stub (raises `NotImplementedError`) |
-| C — Full Hybrid | Ollama + TabbyAPI/ExLlamaV3 + cloud subscriptions | **Implemented** |
+| Path | Description | Executor endpoint | Environment checks |
+|---|---|---|---|
+| A — Cloud-Only | Groq + Claude/ChatGPT subscriptions, no local models | Groq API (`GROQ_API_KEY`) | Python, Aider, Groq key, Claude Code |
+| B — Light Local | Ollama only, no TabbyAPI | Ollama OpenAI-compatible API on `localhost:11434` | Python, NVIDIA driver, Ollama (+ server config), Aider, Groq key, Claude Code |
+| C — Full Hybrid | Ollama + TabbyAPI/ExLlamaV3 + cloud subscriptions | TabbyAPI on `localhost:5000` | All of the above plus TabbyAPI |
+
+```bash
+# scaffold against Ollama instead of TabbyAPI
+python3 generateNewProject.py my-app --path-type light-local --stack python
+python3 setupEnvironment.py --path-type light-local
+
+# no local models at all — execute steps on Groq
+python3 generateNewProject.py my-app --path-type cloud-only --stack python
+python3 setupEnvironment.py --path-type cloud-only
+```
 
 ## Idempotency
 

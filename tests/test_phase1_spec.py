@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SPEC_PATH = REPO_ROOT / "templates" / "PHASE1_SPEC.md"
+from nimbus_tiers.resources import templates_root
+
+SPEC_PATH = templates_root() / "PHASE1_SPEC.md"
 
 
 def _extract_worked_example_blocks(text: str) -> list[str]:

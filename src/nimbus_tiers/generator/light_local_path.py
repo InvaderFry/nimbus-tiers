@@ -1,19 +1,17 @@
-"""Path B: Light Local setup (Ollama only, no TabbyAPI). Stub — not yet implemented."""
+"""Path B: Light Local setup (Ollama only — no TabbyAPI, no ExLlamaV3).
+
+Same scaffold as the other paths; the Aider config (`paths/light-local/`)
+points at Ollama's OpenAI-compatible endpoint on localhost:11434 instead of
+TabbyAPI, so no TabbyAPI example doc is copied.
+"""
 
 from __future__ import annotations
 
-from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.generator.stack_scaffold_path import StackScaffoldPath
 
 
-class LightLocalPath(SetupPath):
+class LightLocalPath(StackScaffoldPath):
     name = "light-local"
-
-    def template_files(self) -> list[TemplateSpec]:
-        raise NotImplementedError(
-            "LightLocalPath (Path B) is planned but not yet implemented. "
-            "Track in BuildThisRepoFromArchitecture.md follow-ups. "
-            "Use --path-type full-hybrid for now."
-        )
 
 
 __all__ = ["LightLocalPath"]

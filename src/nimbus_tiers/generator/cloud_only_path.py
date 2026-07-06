@@ -1,19 +1,17 @@
-"""Path A: Cloud-Only setup. Stub — not yet implemented."""
+"""Path A: Cloud-Only setup (Groq + frontier subscriptions — no local models).
+
+Same scaffold as the other paths; the Aider config (`paths/cloud-only/`)
+targets Groq's hosted models via GROQ_API_KEY, so there is no local endpoint
+or TabbyAPI example doc.
+"""
 
 from __future__ import annotations
 
-from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
+from nimbus_tiers.generator.stack_scaffold_path import StackScaffoldPath
 
 
-class CloudOnlyPath(SetupPath):
+class CloudOnlyPath(StackScaffoldPath):
     name = "cloud-only"
-
-    def template_files(self) -> list[TemplateSpec]:
-        raise NotImplementedError(
-            "CloudOnlyPath (Path A) is planned but not yet implemented. "
-            "Track in BuildThisRepoFromArchitecture.md follow-ups. "
-            "Use --path-type full-hybrid for now."
-        )
 
 
 __all__ = ["CloudOnlyPath"]

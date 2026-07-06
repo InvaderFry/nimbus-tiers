@@ -2,6 +2,11 @@
 
 *Review date: 2026-07-06. Scope: full repo at `main` (commit `1373e34`).*
 
+> **Addendum (2026-07-06, later the same day):** the two features rated under
+> 3 stars have since been fixed — see the [addendum](#addendum-2026-07-06--sub-3-star-features-fixed)
+> at the end of this document for the updated ratings. The ratings in the body
+> below are kept as written, as a record of the state they reviewed.
+
 ## Overview
 
 nimbus-tiers is a template repository for a three-phase "Hybrid AI Coding Architecture": plan with a frontier model (Claude Code), execute one small step at a time with a local model (Aider + Qwen2.5-Coder-14B via TabbyAPI), then review with the frontier model again. The repo ships two stdlib-only Python CLIs (`generateNewProject.py`, `setupEnvironment.py`), a template suite copied into new projects, and a heavily hardened `phase2.sh` executor script.
@@ -138,3 +143,51 @@ A guided prompt flow (choose path → stack → name, with explanations) would h
 | 10 | Go/Rust stacks | ★★★ |
 | 11 | macOS/Windows portability | ★★ |
 | 12 | Generator wizard mode | ★★ |
+
+---
+
+## Addendum (2026-07-06) — sub-3-star features fixed
+
+Both features rated under 3 stars were reworked in the two commits on
+`claude/fix-sub-3-star-features` (`cb33ea3`, `1264ebc`), immediately after
+this review. Updated ratings:
+
+### 8. Packaging & distribution — ★★ → ★★★★
+
+The templates tree now lives inside the package (`src/nimbus_tiers/templates/`)
+and is resolved via `importlib.resources` (`nimbus_tiers/resources.py`), so
+wheels ship all 38 template files — including the dotfiles, which required
+explicit dot-prefixed package-data globs. `pipx install .` now produces a
+working `nimbus-generate`: verified by installing the wheel into a clean venv
+and scaffolding all three path types from an unrelated directory. The default
+destination is unchanged from a source checkout (sibling of the repo) and
+falls back to `<cwd>/<name>` when installed. The missing MIT `LICENSE` file
+was added to match the pyproject metadata. **Why not 5:** no CI yet publishes
+or re-verifies the wheel on each change (improvement #1 still open), and the
+sdist/wheel build was only exercised locally.
+
+### 9. Setup paths A & B — ★★ → ★★★★
+
+`CloudOnlyPath` and `LightLocalPath` are no longer stubs. The shared scaffold
+moved into a `StackScaffoldPath` base; each path contributes its own Aider
+config under `templates/paths/<name>/`:
+
+- **light-local** targets Ollama's OpenAI-compatible endpoint on
+  `localhost:11434` with an Ollama-specific anti-looping serving checklist;
+  `phase2.sh` needed no changes because its preflight already degrades
+  gracefully on non-TabbyAPI servers.
+- **cloud-only** targets `groq/llama-3.3-70b-versatile` via `GROQ_API_KEY`,
+  which the existing phase2.sh preflight already enforces.
+
+`nimbus-setup` gained matching per-path step lists (light-local drops
+TabbyAPI; cloud-only checks only Python, Aider, Groq key, Claude Code), and
+the stub tests were replaced with per-path file-list, config-content, and
+step-list contracts (suite: 204 → 255 tests). **Why not 5:** neither path has
+been exercised against a live Ollama or Groq endpoint end-to-end yet, and the
+guide/architecture docs still narrate the Full Hybrid path as the primary
+worked example (a note now points readers to their path's `.aider.conf.yml`).
+
+With these fixes, improvements #2 (packaging), #3 (LICENSE), and #4
+(Path B, plus Path A) from the backlog are done. The top remaining item is
+unchanged: **#1, add CI** — nothing yet re-runs the 255 tests or rebuilds the
+wheel on each change.

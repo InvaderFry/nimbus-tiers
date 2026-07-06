@@ -1,139 +1,28 @@
 """Path C: Full Hybrid setup (Ollama + TabbyAPI/ExLlamaV3 + cloud subscriptions).
 
-This is the only fully-implemented setup path in the current iteration. The file
-list mirrors the architecture doc's "What gets copied into the new project"
-section.
+The scaffold is shared with the other paths (StackScaffoldPath); this path
+adds the TabbyAPI-flavored Aider config (via `paths/full-hybrid/`) and the
+ready-to-copy TabbyAPI server example.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
-
-_SUPPORTED_STACKS = frozenset({"java-maven", "java-gradle", "python", "node"})
-
-_EXECUTABLE_SCRIPTS: dict[str, list[str]] = {
-    "java-maven": ["mvnw", "phase2.sh"],
-    "java-gradle": ["gradlew", "phase2.sh"],
-    "python": ["phase2.sh"],
-    "node": ["phase2.sh"],
-}
+from nimbus_tiers.generator.setup_path import TemplateSpec
+from nimbus_tiers.generator.stack_scaffold_path import StackScaffoldPath
 
 
-class FullHybridPath(SetupPath):
+class FullHybridPath(StackScaffoldPath):
     name = "full-hybrid"
 
-    def __init__(
-        self,
-        stack: str = "java-maven",
-        package_name: str = "app",
-        class_name: str = "App",
-    ) -> None:
-        self.stack = stack
-        self.package_name = package_name
-        self.class_name = class_name
-
-    def template_files(self) -> list[TemplateSpec]:
-        common: list[tuple[str, str]] = [
-            ("CONTEXT.md", "CONTEXT.md"),
-            ("VERIFY.md", "VERIFY.md"),
-            ("CLAUDE.md", "CLAUDE.md"),
-            ("NIMBUS_GUIDE.md", "NIMBUS_GUIDE.md"),
-            ("PHASE1_SPEC.md", "PHASE1_SPEC.md"),
-            ("phase2.sh", "phase2.sh"),
-            (".aider.conf.yml", ".aider.conf.yml"),
-            (".aiderignore", ".aiderignore"),
-            (".gitignore", ".gitignore"),
-            ("plans/README.md", "plans/README.md"),
-            ("logs/ai-routing.csv", "logs/ai-routing.csv"),
-            ("docs/architecture.md", "docs/architecture.md"),
-            ("tabbyapi-nimbus-example.yml", "docs/tabbyapi-nimbus-example.yml"),
+    def extra_docs(self) -> list[TemplateSpec]:
+        return [
+            TemplateSpec(
+                Path("tabbyapi-nimbus-example.yml"),
+                Path("docs/tabbyapi-nimbus-example.yml"),
+            )
         ]
-        return (
-            [TemplateSpec(Path(src), Path(dest)) for src, dest in common]
-            + self._stack_template_files()
-            + [
-                TemplateSpec(
-                    Path(f"stacks/{self.stack}/PHASE1_VERIFY.md"),
-                    Path("PHASE1_VERIFY_HELPER.md"),
-                )
-            ]
-        )
-
-    def _stack_template_files(self) -> list[TemplateSpec]:
-        stack = self.stack
-        pkg = self.package_name
-
-        if stack in ("java-maven", "java-gradle"):
-            main_pkg = f"src/main/java/com/example/{pkg}"
-            test_pkg = f"src/test/java/com/example/{pkg}"
-            cls = self.class_name
-            java_common = [
-                TemplateSpec(
-                    Path(f"stacks/{stack}/Application.java"),
-                    Path(f"{main_pkg}/{cls}Application.java"),
-                ),
-                TemplateSpec(
-                    Path(f"stacks/{stack}/ApplicationTest.java"),
-                    Path(f"{test_pkg}/{cls}ApplicationTest.java"),
-                ),
-                TemplateSpec(
-                    Path(f"stacks/{stack}/application.properties"),
-                    Path("src/main/resources/application.properties"),
-                ),
-            ]
-            if stack == "java-maven":
-                return java_common + [
-                    TemplateSpec(Path("stacks/java-maven/pom.xml"), Path("pom.xml")),
-                    TemplateSpec(Path("stacks/java-maven/mvnw"), Path("mvnw")),
-                    TemplateSpec(
-                        Path(
-                            "stacks/java-maven/mockito-extensions/org.mockito.plugins.MockMaker"
-                        ),
-                        Path(
-                            "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker"
-                        ),
-                    ),
-                ]
-            else:
-                return java_common + [
-                    TemplateSpec(Path("stacks/java-gradle/build.gradle"), Path("build.gradle")),
-                    TemplateSpec(Path("stacks/java-gradle/settings.gradle"), Path("settings.gradle")),
-                    TemplateSpec(Path("stacks/java-gradle/gradlew"), Path("gradlew")),
-                    TemplateSpec(
-                        Path(
-                            "stacks/java-gradle/mockito-extensions/org.mockito.plugins.MockMaker"
-                        ),
-                        Path(
-                            "src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker"
-                        ),
-                    ),
-                ]
-
-        if stack == "python":
-            return [
-                TemplateSpec(Path("stacks/python/main.py"), Path("main.py")),
-                TemplateSpec(Path("stacks/python/requirements.txt"), Path("requirements.txt")),
-                TemplateSpec(Path("stacks/python/test_main.py"), Path("tests/test_main.py")),
-            ]
-
-        if stack == "node":
-            return [
-                TemplateSpec(Path("stacks/node/package.json"), Path("package.json")),
-                TemplateSpec(Path("stacks/node/index.js"), Path("index.js")),
-                TemplateSpec(Path("stacks/node/index.test.js"), Path("index.test.js")),
-            ]
-
-        raise ValueError(
-            f"Unsupported stack: {stack!r}. Supported stacks: {sorted(_SUPPORTED_STACKS)}"
-        )
-
-    def post_copy_hooks(self, project_root: Path) -> None:
-        for script_name in _EXECUTABLE_SCRIPTS.get(self.stack, []):
-            script = project_root / script_name
-            if script.exists():
-                script.chmod(script.stat().st_mode | 0o755)
 
 
 __all__ = ["FullHybridPath"]

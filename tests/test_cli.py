@@ -17,9 +17,10 @@ from nimbus_tiers.generator.cli import (
     main,
 )
 from nimbus_tiers.generator.git_initializer import GitInitializer
+from nimbus_tiers.resources import templates_root
 
 
-REPO_TEMPLATES_ROOT = Path(__file__).resolve().parents[1] / "templates"
+REPO_TEMPLATES_ROOT = templates_root()
 
 
 def _make_runner() -> MagicMock:
@@ -64,10 +65,11 @@ def test_stack_test_commands_includes_node() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_aider_conf_template_contains_test_cmd_placeholder() -> None:
-    content = (REPO_TEMPLATES_ROOT / ".aider.conf.yml").read_text()
+@pytest.mark.parametrize("path_type", ["full-hybrid", "light-local", "cloud-only"])
+def test_aider_conf_template_contains_test_cmd_placeholder(path_type: str) -> None:
+    content = (REPO_TEMPLATES_ROOT / "paths" / path_type / ".aider.conf.yml").read_text()
     assert "{{TEST_CMD}}" in content
-    assert "pytest" not in content
+    assert "test-cmd: pytest" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +104,41 @@ def test_cli_default_stack_is_java_maven(
     assert rc == 0
     aider_conf = (project_dir / ".aider.conf.yml").read_text()
     assert "test-cmd: ./mvnw test" in aider_conf
+
+
+# ---------------------------------------------------------------------------
+# CLI integration: --path-type selects the matching Aider config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path_type, conf_marker, tabby_doc_expected",
+    [
+        ("full-hybrid", "Path C (Full Hybrid)", True),
+        ("light-local", "Path B (Light Local)", False),
+        ("cloud-only", "Path A (Cloud-Only)", False),
+    ],
+)
+def test_cli_writes_path_specific_aider_conf(
+    tmp_path: Path,
+    path_type: str,
+    conf_marker: str,
+    tabby_doc_expected: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_dir = tmp_path / "proj"
+    rc = _patched_main(
+        monkeypatch,
+        ["my-proj", "--path", str(project_dir), "--path-type", path_type, "--stack", "python"],
+    )
+    assert rc == 0
+    aider_conf = (project_dir / ".aider.conf.yml").read_text()
+    assert conf_marker in aider_conf
+    assert "test-cmd: pytest -x --no-header" in aider_conf
+    assert (project_dir / "docs" / "tabbyapi-nimbus-example.yml").is_file() is tabby_doc_expected
+    # The shared skeleton lands regardless of path.
+    for rel in ("phase2.sh", "PHASE1_SPEC.md", "CONTEXT.md", "main.py"):
+        assert (project_dir / rel).is_file(), f"missing: {rel}"
 
 
 # ---------------------------------------------------------------------------

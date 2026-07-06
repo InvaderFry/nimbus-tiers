@@ -34,18 +34,39 @@ def _full_hybrid_steps() -> list[SetupStep]:
     ]
 
 
+def _light_local_steps() -> list[SetupStep]:
+    """Path B: Ollama only — no TabbyAPI/ExLlamaV3.
+
+    The NVIDIA driver stays in the list as an advisory check: Ollama runs on
+    CPU, but a GPU is what makes a 14B executor usable. The Groq key stays
+    because phase2.sh's PHASE2_FALLBACK_MODEL escalation defaults to Groq.
+    """
+    return [
+        PythonStep(),
+        NvidiaDriverStep(),
+        OllamaStep(),
+        OllamaServerConfigStep(),
+        AiderStep(),
+        GroqApiKeyStep(),
+        ClaudeCodeStep(),
+    ]
+
+
+def _cloud_only_steps() -> list[SetupStep]:
+    """Path A: no local models — just the tools and the Groq credential."""
+    return [
+        PythonStep(),
+        AiderStep(),
+        GroqApiKeyStep(),
+        ClaudeCodeStep(),
+    ]
+
+
 PATH_REGISTRY: Mapping[str, "callable[[], list[SetupStep]]"] = {
     "full-hybrid": _full_hybrid_steps,
-    "cloud-only": lambda: _not_implemented("cloud-only"),
-    "light-local": lambda: _not_implemented("light-local"),
+    "light-local": _light_local_steps,
+    "cloud-only": _cloud_only_steps,
 }
-
-
-def _not_implemented(path_type: str) -> list[SetupStep]:
-    raise SystemExit(
-        f"setupEnvironment for --path-type {path_type} is not yet implemented. "
-        "Use --path-type full-hybrid for now."
-    )
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -61,7 +82,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--path-type",
         choices=sorted(PATH_REGISTRY.keys()),
         default="full-hybrid",
-        help="Which setup path's stack to check. Currently only 'full-hybrid' is implemented.",
+        help=(
+            "Which setup path's stack to check: full-hybrid (Ollama + TabbyAPI "
+            "+ cloud), light-local (Ollama only), or cloud-only (no local models)."
+        ),
     )
     parser.add_argument(
         "--check-only",
