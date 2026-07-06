@@ -142,6 +142,8 @@ claude          # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine C
 claude /review  # Phase 3
 ```
 
+`phase2.sh --status` prints a read-only pipeline report (next step, lock/sentinel state, dirty tree, gate lint) and `phase2.sh --dry-run` exercises every pre-Aider check without invoking the model or touching the tree.
+
 ### Optional: install as a Python package
 
 If you want global `nimbus-generate` / `nimbus-setup` console-script aliases, install the package. **On modern Debian/Ubuntu/WSL (PEP 668)**, the system Python refuses `pip install` outside a venv — pick one of these:

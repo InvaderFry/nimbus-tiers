@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Phase 2 executor — runs one Aider step at a time against the local model.
 # Re-run until all steps are complete; picks up where it left off via CompletedSteps.md.
-# Usage: ./phase2.sh
+# Usage: ./phase2.sh [--status | --dry-run | --help]
 #
 # Exit codes:
 #   0  step recorded DONE (or all steps complete; archive performed)
 #   1  Aider failure, empty diff, or verify.sh failed — step not recorded
 #   2  step halted intentionally (plans/halt-stepNN.md written) — review halt report
+#  64  unknown command-line argument
+# With --status/--dry-run: 0 = a run could proceed, 1 = something blocks it.
 set -euo pipefail
 
 # Pure helpers (path parsing, guard regexes, log classifiers) live in
@@ -21,11 +23,45 @@ fi
 # shellcheck source=phase2-lib.sh
 . "${_PHASE2_DIR}/phase2-lib.sh"
 
+_usage() {
+    cat <<'USAGE'
+Usage: ./phase2.sh [--status | --dry-run | --help]
+
+  (no flag)   Run the next step: invoke Aider, verify, commit.
+  --status    Read-only pipeline report: next step, lock / WIP-sentinel /
+              fail-marker state, dirty tree, verify.sh gate lint.
+              Exit 0 if a run could proceed, 1 if something would block it.
+              Never takes the lock and never writes.
+  --dry-run   Run every pre-Aider check (branch guard, dirty-tree guard,
+              gate lint, endpoint preflight, planned-path parse and the
+              edit-format decision) without invoking Aider and without
+              touching the working tree, .git/ bookkeeping, or step logs.
+  --help      Show this help.
+USAGE
+}
+
+NIMBUS_MODE=run
+case "${1:-}" in
+    '') ;;
+    --status)  NIMBUS_MODE=status ;;
+    --dry-run) NIMBUS_MODE=dryrun ;;
+    --help|-h) _usage; exit 0 ;;
+    *)
+        echo "ERROR: unknown argument: $1" >&2
+        _usage >&2
+        exit 64
+        ;;
+esac
+
 # Single-run guard: prevent concurrent phase2.sh executions in the same repo.
 # A second run can race bookkeeping and produce confusing sentinel recovery.
+# Acquisition is wrapped in a function so the read-only modes (--status,
+# --dry-run) can skip it — they must not block on, steal, or clean up a live
+# run's lock.
 LOCK_DIR=".git/phase2.lock"
 LOCK_PID_FILE="${LOCK_DIR}/pid"
 LOCK_START_FILE="${LOCK_DIR}/starttime"
+_acquire_lock() {
 if mkdir "$LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "$LOCK_PID_FILE"
     get_proc_start_time "$$" > "$LOCK_START_FILE" 2>/dev/null || true
@@ -77,6 +113,7 @@ else
         exit 1
     fi
 fi
+}
 cleanup_lock() {
     rm -f "$LOCK_PID_FILE" 2>/dev/null || true
     rm -f "$LOCK_START_FILE" 2>/dev/null || true
@@ -125,8 +162,131 @@ _handle_signal() {
     [ -n "${_WATCHDOG_SUBSHELL:-}" ] && kill -KILL "$_WATCHDOG_SUBSHELL" 2>/dev/null || true
     kill -KILL 0 2>/dev/null || true
 }
-trap '_handle_signal' INT TERM
-trap 'cleanup_lock' EXIT
+# Pathspec excludes shared by the dirty-tree checks, the post-aider commit,
+# and --status: build-artifact dirs whose contents are not part of the step
+# diff, plus the transient aider log. Defined before the mode dispatch so
+# --status reports with exactly the pathspec a real run would use.
+_BUILD_EXCLUDES=(
+    ':!target' ':!build' ':!.gradle'
+    ':!node_modules' ':!dist' ':!out'
+)
+_COMMIT_EXCLUDES=("${_BUILD_EXCLUDES[@]}" ':!plans/*.log')
+
+# Excludes for the "Aider made no changes" guard ONLY. A change to .gitignore
+# alone is housekeeping, not progress on the step — Aider rewrites .gitignore on
+# startup (adding its own working-file globs), and any other tool may touch it
+# too. If that is the *only* dirty path, the model did no real work and the step
+# must NOT be allowed to reach verify.sh and be recorded DONE. The template
+# .gitignore already pre-lists `.aider*` so Aider has no reason to edit it, but
+# this guard is the backstop for any housekeeping-only change. Note: .gitignore
+# is deliberately NOT in _COMMIT_EXCLUDES, so a step that legitimately edits it
+# alongside real source changes still commits the .gitignore edit.
+_NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
+
+# Read-only pipeline report (--status). Reuses the same lib helpers and
+# pathspecs as a real run so its verdicts cannot drift from the guards'.
+# Returns 0 when a run could proceed, 1 when something would block it.
+_phase2_status() {
+    local _blocked=0 _b _next _pad _step_file _words _lp _dirty _done
+    if _b=$(git symbolic-ref --short HEAD 2>/dev/null); then
+        case "$_b" in
+            master|main)
+                echo "[--] branch: $_b — phase2.sh refuses to run here (checkout a feature branch)"
+                _blocked=1
+                ;;
+            *) echo "[OK] branch: $_b" ;;
+        esac
+    else
+        echo "[--] branch: detached HEAD — commits would be unreachable"
+        _blocked=1
+    fi
+
+    _next=$(nimbus_next_step)
+    _pad=$(printf '%02d' "$_next")
+    _step_file="plans/step${_pad}.md"
+    if [ -f "$_step_file" ]; then
+        _words=$(wc -w < "$_step_file" | tr -d '[:space:]')
+        if [ "${_words:-0}" -gt 320 ]; then
+            echo "[~~] next step: $_next ($_step_file, ${_words} words — over the ~300-word cap; consider splitting)"
+        else
+            echo "[OK] next step: $_next ($_step_file, ${_words} words)"
+        fi
+    elif [ "$_next" -eq 1 ]; then
+        echo "[--] next step: plans/step01.md missing — run Phase 1 first"
+        _blocked=1
+    else
+        echo "[OK] next step: all steps complete (a run would offer to archive PLAN.md)"
+    fi
+
+    if [ -d "$LOCK_DIR" ]; then
+        _lp=$(tr -cd '0-9' < "$LOCK_PID_FILE" 2>/dev/null || true)
+        if [ -n "$_lp" ] && kill -0 "$_lp" 2>/dev/null; then
+            echo "[--] lock: held by live PID $_lp — another run is active"
+            _blocked=1
+        else
+            echo "[~~] lock: stale (owner PID ${_lp:-unknown} gone) — a run would auto-recover it"
+        fi
+    else
+        echo "[OK] lock: free"
+    fi
+
+    if [ -f ".git/phase2-wip-step${_pad}" ]; then
+        echo "[~~] wip sentinel: armed for step $_next — a run would try verify-first recovery"
+    else
+        echo "[OK] wip sentinel: none"
+    fi
+
+    if [ -f ".git/phase2-fail-step${_pad}" ]; then
+        if [ -n "${PHASE2_FALLBACK_MODEL:-}" ]; then
+            echo "[~~] fail marker: step $_next failed before — next run escalates to ${PHASE2_FALLBACK_MODEL}"
+        else
+            echo "[~~] fail marker: step $_next failed before (set PHASE2_FALLBACK_MODEL to auto-escalate)"
+        fi
+    else
+        echo "[OK] fail marker: none"
+    fi
+
+    _dirty=$(git status --porcelain -- '.' "${_COMMIT_EXCLUDES[@]}" 2>/dev/null || true)
+    if [ -n "$_dirty" ] && [ ! -f ".git/phase2-wip-step${_pad}" ]; then
+        echo "[--] working tree: dirty — blocks a run (commit, stash, or discard first):"
+        printf '%s\n' "$_dirty" | sed 's/^/       /'
+        _blocked=1
+    elif [ -n "$_dirty" ]; then
+        echo "[~~] working tree: dirty — allowed for recovery (WIP sentinel armed)"
+    else
+        echo "[OK] working tree: clean"
+    fi
+
+    if [ -f verify.sh ]; then
+        if nimbus_gate_swallows_exit verify.sh; then
+            echo "[--] verify.sh: contains the 'if ! wait' exit-swallowing pattern — blocks a run (see PHASE1_VERIFY_HELPER.md)"
+            _blocked=1
+        else
+            echo "[OK] verify.sh: present, gate lint clean"
+        fi
+    else
+        echo "[~~] verify.sh: missing — a run would fail at the verify stage"
+    fi
+
+    if [ -f CompletedSteps.md ]; then
+        _done=$(grep -c ': DONE' CompletedSteps.md 2>/dev/null || true)
+        echo "     completed: ${_done:-0} step(s) recorded in CompletedSteps.md"
+    fi
+    return "$_blocked"
+}
+
+if [ "$NIMBUS_MODE" = status ]; then
+    if _phase2_status; then exit 0; else exit 1; fi
+fi
+
+# The lock and its cleanup traps belong to real runs only: --dry-run mutates
+# nothing (no bookkeeping to race) and arming the EXIT trap in a read-only
+# mode would delete a live run's lock files on exit.
+if [ "$NIMBUS_MODE" = run ]; then
+    _acquire_lock
+    trap '_handle_signal' INT TERM
+    trap 'cleanup_lock' EXIT
+fi
 
 # Recursively SIGKILL a process and all of its descendants. Used by the
 # degenerate-output watchdog to tear down just the aider pipeline (timeout,
@@ -204,6 +364,11 @@ if [ ! -f "$STEP_FILE" ]; then
 
     echo "All steps complete."
 
+    if [ "$NIMBUS_MODE" = dryrun ]; then
+        echo "==> DRY RUN: a real run would offer to archive PLAN.md and remove plans/step*.md."
+        exit 0
+    fi
+
     BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | sed 's|.*/||' || echo "plan")
     ARCHIVE="plans/$(date +%Y-%m)-${BRANCH}.md"
 
@@ -260,13 +425,19 @@ if command -v wc >/dev/null 2>&1; then
     fi
 fi
 
-LOG_FILE="plans/step${STEP_PAD}.log"
-if [ -f "$LOG_FILE" ]; then
-    LOG_N=2
-    while [ -f "plans/step${STEP_PAD}-${LOG_N}.log" ]; do
-        LOG_N=$((LOG_N + 1))
-    done
-    LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
+# In dry-run mode logf/logf_err still print to the terminal, but their log
+# mirror goes to /dev/null — a dry run must not create or grow step logs.
+if [ "$NIMBUS_MODE" = dryrun ]; then
+    LOG_FILE=/dev/null
+else
+    LOG_FILE="plans/step${STEP_PAD}.log"
+    if [ -f "$LOG_FILE" ]; then
+        LOG_N=2
+        while [ -f "plans/step${STEP_PAD}-${LOG_N}.log" ]; do
+            LOG_N=$((LOG_N + 1))
+        done
+        LOG_FILE="plans/step${STEP_PAD}-${LOG_N}.log"
+    fi
 fi
 
 # Step-log diagnostics. Aider and verify.sh output is teed into $LOG_FILE by
@@ -529,25 +700,8 @@ fi
 # kill signal including SIGKILL.
 WIP_FILE=".git/phase2-wip-step${STEP_PAD}"
 
-# Pathspec excludes shared by the dirty-tree check and the post-aider commit:
-# build-artifact dirs whose contents are not part of the step diff, plus the
-# transient aider log.
-_BUILD_EXCLUDES=(
-    ':!target' ':!build' ':!.gradle'
-    ':!node_modules' ':!dist' ':!out'
-)
-_COMMIT_EXCLUDES=("${_BUILD_EXCLUDES[@]}" ':!plans/*.log')
-
-# Excludes for the "Aider made no changes" guard ONLY. A change to .gitignore
-# alone is housekeeping, not progress on the step — Aider rewrites .gitignore on
-# startup (adding its own working-file globs), and any other tool may touch it
-# too. If that is the *only* dirty path, the model did no real work and the step
-# must NOT be allowed to reach verify.sh and be recorded DONE. The template
-# .gitignore already pre-lists `.aider*` so Aider has no reason to edit it, but
-# this guard is the backstop for any housekeeping-only change. Note: .gitignore
-# is deliberately NOT in _COMMIT_EXCLUDES, so a step that legitimately edits it
-# alongside real source changes still commits the .gitignore edit.
-_NOCHANGE_EXCLUDES=("${_COMMIT_EXCLUDES[@]}" ':!.gitignore')
+# (_BUILD_EXCLUDES / _COMMIT_EXCLUDES / _NOCHANGE_EXCLUDES are defined above
+# the mode dispatch so --status shares them.)
 
 # Refuse to start with a dirty working tree unless a WIP sentinel signals an
 # interrupted prior run for this step. Without this guard the bottom-of-script
@@ -596,13 +750,20 @@ fi
 # real changes. Measured with _NOCHANGE_EXCLUDES so a housekeeping-only
 # .gitignore edit does not count as recoverable work either. Clear the sentinel
 # and fall through to a fresh Aider run instead.
-if [ -f "$WIP_FILE" ] && [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
+if [ "$NIMBUS_MODE" = run ] && [ -f "$WIP_FILE" ] && [ -z "$(git status --porcelain -- '.' "${_NOCHANGE_EXCLUDES[@]}" 2>/dev/null)" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT but no uncommitted work to recover — clearing stale sentinel and running Aider fresh."
     rm -f "$WIP_FILE"
 fi
 
+# Dry-run reports sentinel state but never runs verify.sh (a build can dirty
+# artifact dirs) and never clears the sentinel — it proceeds through the
+# pre-Aider checks as a fresh run would.
+if [ "$NIMBUS_MODE" = dryrun ] && [ -f "$WIP_FILE" ]; then
+    echo "==> DRY RUN: WIP sentinel armed for step $NEXT — a real run would try verify-first recovery."
+fi
+
 SKIP_AIDER=false
-if [ -f "$WIP_FILE" ]; then
+if [ "$NIMBUS_MODE" = run ] && [ -f "$WIP_FILE" ]; then
     echo "==> Interrupted-run sentinel found for step $NEXT — running pre-flight verify..."
     PREFLIGHT_EXIT=0
     set +e
@@ -707,7 +868,12 @@ if [ "$SKIP_AIDER" = false ]; then
             case "$path" in
                 */) ;;  # directory-style entry — nothing to create as a file
                 *)
-                    if mkdir -p "$(dirname "$path")" 2>/dev/null && : > "$path" 2>/dev/null; then
+                    if [ "$NIMBUS_MODE" = dryrun ]; then
+                        # Classify only — a dry run must not create the
+                        # placeholder file or its parent directories.
+                        _PLACEHOLDERS+=("$path")
+                        FILE_ARGS+=("--file" "$path")
+                    elif mkdir -p "$(dirname "$path")" 2>/dev/null && : > "$path" 2>/dev/null; then
                         _PLACEHOLDERS+=("$path")
                         FILE_ARGS+=("--file" "$path")
                     else
@@ -731,7 +897,11 @@ if [ "$SKIP_AIDER" = false ]; then
                  "    (non-regular files, dangling symlinks, placeholder failures, or directory-style entries — see per-path WARNs above)." \
                  "    Aider will run without explicit --file args and may hallucinate SEARCH blocks."
     elif [ "${#_PLACEHOLDERS[@]}" -gt 0 ]; then
-        logf "==> Created ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s) so Aider edits real targets:"
+        if [ "$NIMBUS_MODE" = dryrun ]; then
+            logf "==> DRY RUN: would create ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s):"
+        else
+            logf "==> Created ${#_PLACEHOLDERS[@]} empty placeholder(s) for missing planned file(s) so Aider edits real targets:"
+        fi
         for _ph in "${_PLACEHOLDERS[@]}"; do
             logf "    placeholder: $_ph"
         done
@@ -825,6 +995,23 @@ if [ "$SKIP_AIDER" = false ]; then
     # its own step — splitting alone does not prevent the loop.
     if [ "${#EDIT_FMT_ARGS[@]}" -eq 0 ] && [ "$_existing_target_count" -gt 1 ]; then
         logf_err "==> WARN: step targets ${_existing_target_count} existing files and is using diff edit format. Local models can loop regenerating large existing-file blocks. Prefer making each a small targeted edit with verbatim anchors rather than a full rewrite; isolate any unavoidable full rewrite into its own step (see PHASE1_SPEC §1)."
+    fi
+
+    # Dry run stops here: every pre-Aider check has passed (branch, dirty
+    # tree, gate lint, endpoint preflight, planned-path parse, edit-format
+    # decision). Exit before the watchdog config and WIP sentinel, which
+    # write into .git/. Note dry-run classified missing planned files as
+    # placeholders without creating them, so _PLACEHOLDERS names are
+    # would-creates.
+    if [ "$NIMBUS_MODE" = dryrun ]; then
+        echo "==> DRY RUN complete — all pre-Aider checks passed for step $NEXT."
+        echo "    A real run would invoke aider on $STEP_FILE with:"
+        echo "      targets:     $(( ${#FILE_ARGS[@]} / 2 )) --file arg(s)${_PLACEHOLDERS[0]:+ (${#_PLACEHOLDERS[@]} would-be placeholder(s))}"
+        echo "      edit format: ${EDIT_FMT_ARGS[1]:-diff (aider default)}"
+        if [ "$FALLBACK_ACTIVE" = true ]; then
+            echo "      model:       $PHASE2_FALLBACK_MODEL (fallback escalation armed)"
+        fi
+        exit 0
     fi
 
     # Live degenerate-output watchdog config. A local model can loop emitting the

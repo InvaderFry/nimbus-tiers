@@ -469,3 +469,135 @@ def test_python_verify_helper_fails_hard_on_missing_venv() -> None:
     assert "non-zero" in text and "sentinel" in text, (
         "helper must scope the exit-0 allowance to a missing sentinel only"
     )
+
+
+# ----- --status / --dry-run read-only modes --------------------------------------
+
+
+def _scaffold_phase2_repo(tmp_path: Path) -> Path:
+    """Minimal committed project with phase2.sh + lib on a feature branch."""
+    repo = tmp_path / "proj"
+    (repo / "plans").mkdir(parents=True)
+    (repo / ".gitignore").write_text(
+        ".aider*\n!.aider.conf.yml\n!.aiderignore\nplans/*.log\n", encoding="utf-8"
+    )
+    (repo / "verify.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (repo / "verify.sh").chmod(0o755)
+    (repo / "plans" / "step01.md").write_text(
+        "# Step 01\n## Files to change\n- newfile.py\n", encoding="utf-8"
+    )
+    for name in ("phase2.sh", "phase2-lib.sh"):
+        (repo / name).write_text(
+            (TEMPLATES_ROOT / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    (repo / "phase2.sh").chmod(0o755)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    _git(repo, "config", "commit.gpgsign", "false")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "scaffold")
+    _git(repo, "checkout", "-qb", "feature/test")
+    return repo
+
+
+def _run_phase2(repo: Path, *args: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ, **(env_extra or {}))
+    return subprocess.run(
+        ["./phase2.sh", *args], cwd=repo, env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+
+
+def test_help_flag_exits_zero(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    result = _run_phase2(repo, "--help")
+    assert result.returncode == 0
+    assert "--status" in result.stdout and "--dry-run" in result.stdout
+
+
+def test_unknown_flag_exits_64(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    result = _run_phase2(repo, "--bogus")
+    assert result.returncode == 64
+    assert "unknown argument" in result.stderr
+
+
+def test_status_runnable_exits_zero_and_writes_nothing(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    before = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    result = _run_phase2(repo, "--status")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "[OK] branch: feature/test" in result.stdout
+    assert "[OK] next step: 1" in result.stdout
+    assert "[OK] verify.sh: present" in result.stdout
+    after = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    assert before == after, "--status must not touch the working tree"
+    assert not (repo / ".git" / "phase2.lock").exists(), "--status must not take the lock"
+    assert not list((repo / "plans").glob("*.log")), "--status must not create step logs"
+
+
+def test_status_blocked_on_master_exits_one(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    _git(repo, "checkout", "-q", "master")
+    result = _run_phase2(repo, "--status")
+    assert result.returncode == 1
+    assert "refuses to run here" in result.stdout
+
+
+def test_status_reports_dirty_tree_as_blocking(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    (repo / "stray.txt").write_text("uncommitted\n", encoding="utf-8")
+    result = _run_phase2(repo, "--status")
+    assert result.returncode == 1
+    assert "working tree: dirty" in result.stdout
+    assert "stray.txt" in result.stdout
+
+
+def test_dry_run_mutates_nothing_and_reports_decisions(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    # A malformed JVM path must be classified without creating its directory.
+    (repo / "plans" / "step01.md").write_text(
+        "# Step 01\n## Files to change\n- newfile.py\n- src/main/java/com.bad/X.java\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "step with malformed path")
+    before = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    # groq model + key satisfies the endpoint preflight without a live server.
+    result = _run_phase2(
+        repo, "--dry-run",
+        env_extra={"AIDER_MODEL": "groq/llama-3.3-70b-versatile", "GROQ_API_KEY": "fake"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "DRY RUN complete" in result.stdout
+    assert "would create 1 empty placeholder" in result.stdout
+    assert "package-name-as-directory bug?" in result.stderr
+    after = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+    ).stdout
+    assert before == after, "--dry-run must not touch the working tree"
+    assert not (repo / "newfile.py").exists(), "--dry-run must not create placeholders"
+    assert not (repo / "src").exists(), "--dry-run must not create malformed dirs"
+    assert not (repo / ".git" / "phase2.lock").exists(), "--dry-run must not take the lock"
+    assert not (repo / ".git" / "phase2-wip-step01").exists(), (
+        "--dry-run must not arm the WIP sentinel"
+    )
+    assert not list((repo / "plans").glob("*.log")), "--dry-run must not create step logs"
+
+
+def test_dry_run_blocked_by_dirty_tree(tmp_path: Path) -> None:
+    repo = _scaffold_phase2_repo(tmp_path)
+    (repo / "stray.txt").write_text("uncommitted\n", encoding="utf-8")
+    result = _run_phase2(
+        repo, "--dry-run",
+        env_extra={"AIDER_MODEL": "groq/llama-3.3-70b-versatile", "GROQ_API_KEY": "fake"},
+    )
+    assert result.returncode == 1
+    assert "uncommitted changes" in result.stdout
