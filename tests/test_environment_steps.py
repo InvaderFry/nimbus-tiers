@@ -23,6 +23,7 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_rc_export,
     default_rc_path,
 )
 from nimbus_tiers.environment.steps import (
@@ -644,6 +645,69 @@ def test_env_var_step_install_appends_to_rc(tmp_path: Path) -> None:
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
     assert captured == [(str(rc), 'export FOO="1"\n')]
+
+
+def test_env_var_step_install_skips_append_when_already_in_rc(tmp_path: Path) -> None:
+    """Re-running install must not stack duplicate export lines.
+
+    The var being in the rc but not the environment just means the user has
+    not sourced the rc yet — the fix is `source`, not another append.
+    """
+    rc = tmp_path / ".bashrc"
+    rc.write_text('# existing\nexport FOO="1"\n')
+
+    def exploding_writer(_path: str, _line: str) -> None:
+        raise AssertionError("must not append when the rc already has the value")
+
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=exploding_writer,
+        confirm=lambda _p: pytest.fail("must not prompt when the rc already has the value"),
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in" in result.detail
+    assert rc.read_text() == '# existing\nexport FOO="1"\n'
+
+
+def test_env_var_step_install_appends_when_rc_value_differs(tmp_path: Path) -> None:
+    """A wrong value in the rc still gets a fresh append (last export wins)."""
+    rc = tmp_path / ".bashrc"
+    rc.write_text('export FOO="0"\n')
+    captured: list[tuple[str, str]] = []
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=lambda path, line: captured.append((path, line)),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    assert step.install().status is InstallStatus.INSTALLED
+    assert captured == [(str(rc), 'export FOO="1"\n')]
+
+
+def test_env_var_step_double_install_writes_one_export_line(tmp_path: Path) -> None:
+    """End-to-end idempotency with the real rc writer: two installs, one line."""
+    rc = tmp_path / ".bashrc"
+    rc.write_text("# shell rc\n")
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=lambda path, line: append_rc_export("FOO", "1", path),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    assert step.install().status is InstallStatus.INSTALLED
+    assert step.install().status is InstallStatus.INSTALLED
+    assert rc.read_text().count("export FOO=") == 1
 
 
 # ----- EnvironmentSetup orchestrator ----------------------------------------
