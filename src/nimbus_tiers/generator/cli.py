@@ -33,6 +33,8 @@ STACK_TEST_COMMANDS: Mapping[str, str] = {
     "java-maven": "./mvnw test",
     "java-gradle": "./gradlew test",
     "node": "npm test",
+    "go": "go test ./...",
+    "rust": "cargo test --quiet",
 }
 
 

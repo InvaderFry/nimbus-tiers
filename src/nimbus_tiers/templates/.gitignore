@@ -48,7 +48,8 @@ node_modules/
 .next/
 .turbo/
 
-# Common Java artifacts (delete this block if your project isn't Java/Maven or Java/Gradle).
+# Common Java/Rust artifacts (delete this block if your project isn't
+# Java/Maven, Java/Gradle, or Rust — both build into target/).
 target/
 
 # OS / IDE

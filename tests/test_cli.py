@@ -60,6 +60,16 @@ def test_stack_test_commands_includes_node() -> None:
     assert STACK_TEST_COMMANDS["node"] == "npm test"
 
 
+def test_stack_test_commands_includes_go() -> None:
+    assert "go" in STACK_TEST_COMMANDS
+    assert STACK_TEST_COMMANDS["go"] == "go test ./..."
+
+
+def test_stack_test_commands_includes_rust() -> None:
+    assert "rust" in STACK_TEST_COMMANDS
+    assert STACK_TEST_COMMANDS["rust"] == "cargo test --quiet"
+
+
 # ---------------------------------------------------------------------------
 # Template uses placeholder
 # ---------------------------------------------------------------------------
@@ -84,6 +94,8 @@ def test_aider_conf_template_contains_test_cmd_placeholder(path_type: str) -> No
         ("java-maven", "./mvnw test"),
         ("java-gradle", "./gradlew test"),
         ("node", "npm test"),
+        ("go", "go test ./..."),
+        ("rust", "cargo test --quiet"),
     ],
 )
 def test_cli_writes_correct_test_cmd_for_stack(
@@ -243,6 +255,8 @@ def test_derive_class_name(name: str, expected: str) -> None:
                      "src/main/java/com/example/myproj/MyProjApplication.java"]),
     ("python", ["main.py", "requirements.txt", "tests/test_main.py"]),
     ("node", ["package.json", "index.js", "index.test.js"]),
+    ("go", ["go.mod", "main.go", "main_test.go"]),
+    ("rust", ["Cargo.toml", "src/main.rs"]),
 ])
 def test_cli_generates_hello_world_files(
     tmp_path: Path,
@@ -265,3 +279,23 @@ def test_cli_substitutes_package_and_class_in_java_source(
     src = (project_dir / "src/main/java/com/example/myproj/MyProjApplication.java").read_text()
     assert "package com.example.myproj;" in src
     assert "class MyProjApplication" in src
+
+
+def test_cli_substitutes_package_name_in_go_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "proj"
+    _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "go"])
+    gomod = (project_dir / "go.mod").read_text()
+    assert "module example.com/myproj" in gomod
+    assert "{{PACKAGE_NAME}}" not in gomod
+
+
+def test_cli_substitutes_package_name_in_cargo_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "proj"
+    _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "rust"])
+    cargo = (project_dir / "Cargo.toml").read_text()
+    assert 'name = "myproj"' in cargo
+    assert "{{PACKAGE_NAME}}" not in cargo

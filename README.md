@@ -52,6 +52,8 @@ Use `--stack` to tell the generator which tech stack you're targeting. This sets
 | `java-gradle` | `./gradlew test` |
 | `node` | `npm test` |
 | `python` | `pytest -x --no-header` |
+| `go` | `go test ./...` |
+| `rust` | `cargo test --quiet` |
 
 ```bash
 # Java Spring Boot (Maven) — default, no flag needed

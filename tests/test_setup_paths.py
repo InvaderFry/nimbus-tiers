@@ -14,7 +14,7 @@ from nimbus_tiers.resources import templates_root
 
 
 ALL_PATHS = [CloudOnlyPath, LightLocalPath, FullHybridPath]
-ALL_STACKS = ["java-maven", "java-gradle", "python", "node"]
+ALL_STACKS = ["java-maven", "java-gradle", "python", "node", "go", "rust"]
 
 TABBY_DOC_DEST = Path("docs/tabbyapi-nimbus-example.yml")
 
