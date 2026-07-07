@@ -60,6 +60,16 @@ def test_stack_test_commands_includes_node() -> None:
     assert STACK_TEST_COMMANDS["node"] == "npm test"
 
 
+def test_stack_test_commands_includes_go() -> None:
+    assert "go" in STACK_TEST_COMMANDS
+    assert STACK_TEST_COMMANDS["go"] == "go test ./..."
+
+
+def test_stack_test_commands_includes_rust() -> None:
+    assert "rust" in STACK_TEST_COMMANDS
+    assert STACK_TEST_COMMANDS["rust"] == "cargo test --quiet"
+
+
 # ---------------------------------------------------------------------------
 # Template uses placeholder
 # ---------------------------------------------------------------------------
@@ -84,6 +94,8 @@ def test_aider_conf_template_contains_test_cmd_placeholder(path_type: str) -> No
         ("java-maven", "./mvnw test"),
         ("java-gradle", "./gradlew test"),
         ("node", "npm test"),
+        ("go", "go test ./..."),
+        ("rust", "cargo test --quiet"),
     ],
 )
 def test_cli_writes_correct_test_cmd_for_stack(
@@ -243,6 +255,8 @@ def test_derive_class_name(name: str, expected: str) -> None:
                      "src/main/java/com/example/myproj/MyProjApplication.java"]),
     ("python", ["main.py", "requirements.txt", "tests/test_main.py"]),
     ("node", ["package.json", "index.js", "index.test.js"]),
+    ("go", ["go.mod", "main.go", "main_test.go"]),
+    ("rust", ["Cargo.toml", "src/main.rs"]),
 ])
 def test_cli_generates_hello_world_files(
     tmp_path: Path,
@@ -265,3 +279,95 @@ def test_cli_substitutes_package_and_class_in_java_source(
     src = (project_dir / "src/main/java/com/example/myproj/MyProjApplication.java").read_text()
     assert "package com.example.myproj;" in src
     assert "class MyProjApplication" in src
+
+
+# ---------------------------------------------------------------------------
+# Wizard mode (interactive flow when project_name is omitted)
+# ---------------------------------------------------------------------------
+
+
+def _feed_input(monkeypatch: pytest.MonkeyPatch, answers: list[str]) -> None:
+    answer_iter = iter(answers)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answer_iter))
+
+
+def test_wizard_prompts_for_path_and_stack_by_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Prompt order: name, setup path, stack.
+    # sorted paths: 1=cloud-only 2=full-hybrid 3=light-local
+    # sorted stacks: 1=go 2=java-gradle 3=java-maven 4=node 5=python 6=rust
+    project_dir = tmp_path / "proj"
+    _feed_input(monkeypatch, ["wiz-proj", "3", "5"])
+    rc = _patched_main(monkeypatch, ["--path", str(project_dir)])
+    assert rc == 0
+    conf = (project_dir / ".aider.conf.yml").read_text()
+    assert "Path B (Light Local)" in conf
+    assert "test-cmd: pytest -x --no-header" in conf
+
+
+def test_wizard_enter_selects_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "proj"
+    _feed_input(monkeypatch, ["wiz-proj", "", ""])
+    rc = _patched_main(monkeypatch, ["--path", str(project_dir)])
+    assert rc == 0
+    conf = (project_dir / ".aider.conf.yml").read_text()
+    assert "Path C (Full Hybrid)" in conf
+    assert "test-cmd: ./mvnw test" in conf
+
+
+def test_wizard_accepts_choice_names_and_flag_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # --stack pinned by flag: the wizard must only prompt for name and path.
+    project_dir = tmp_path / "proj"
+    _feed_input(monkeypatch, ["wiz-proj", "cloud-only"])
+    rc = _patched_main(monkeypatch, ["--path", str(project_dir), "--stack", "go"])
+    assert rc == 0
+    conf = (project_dir / ".aider.conf.yml").read_text()
+    assert "Path A (Cloud-Only)" in conf
+    assert "test-cmd: go test ./..." in conf
+
+
+def test_wizard_rejects_invalid_choice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _feed_input(monkeypatch, ["wiz-proj", "99"])
+    with pytest.raises(SystemExit, match="Invalid choice"):
+        _patched_main(monkeypatch, ["--path", str(tmp_path / "proj")])
+
+
+def test_explicit_project_name_never_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scripted invocations must stay 100% non-interactive."""
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt="": pytest.fail("input() must not be called with explicit args"),
+    )
+    project_dir = tmp_path / "proj"
+    rc = _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir)])
+    assert rc == 0
+    assert "test-cmd: ./mvnw test" in (project_dir / ".aider.conf.yml").read_text()
+
+
+def test_cli_substitutes_package_name_in_go_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "proj"
+    _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "go"])
+    gomod = (project_dir / "go.mod").read_text()
+    assert "module example.com/myproj" in gomod
+    assert "{{PACKAGE_NAME}}" not in gomod
+
+
+def test_cli_substitutes_package_name_in_cargo_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_dir = tmp_path / "proj"
+    _patched_main(monkeypatch, ["my-proj", "--path", str(project_dir), "--stack", "rust"])
+    cargo = (project_dir / "Cargo.toml").read_text()
+    assert 'name = "myproj"' in cargo
+    assert "{{PACKAGE_NAME}}" not in cargo

@@ -32,6 +32,7 @@ test = ["pytest>=7.0"]
 nimbus-generate = "nimbus_tiers.generator.cli:main"
 nimbus-setup = "nimbus_tiers.environment.cli:main"
 nimbus-update = "nimbus_tiers.updater.cli:main"
+nimbus-stats = "nimbus_tiers.stats.cli:main"
 
 [project.urls]
 Source = "https://github.com/invaderfry/nimbus-tiers"

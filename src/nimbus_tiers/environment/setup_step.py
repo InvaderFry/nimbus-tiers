@@ -188,6 +188,7 @@ class EnvVarStep(SetupStep):
         rc_path: str | None = None,
         env_lookup: Callable[[str], str | None] | None = None,
         rc_writer: Callable[[str, str], None] | None = None,
+        rc_reader: Callable[[str], str | None] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -198,6 +199,9 @@ class EnvVarStep(SetupStep):
         self.description = f"Environment variable {var_name}={expected_value}"
         self._env_lookup = env_lookup if env_lookup is not None else os.environ.get
         self._rc_writer = rc_writer if rc_writer is not None else self._default_rc_writer
+        self._rc_reader = rc_reader if rc_reader is not None else (
+            lambda var: read_bashrc_value(var, self.rc_path)
+        )
 
     def check(self) -> CheckResult:
         actual = self._env_lookup(self.var_name)
@@ -211,6 +215,14 @@ class EnvVarStep(SetupStep):
         return CheckResult(CheckStatus.PRESENT, f"{self.var_name}={actual}")
 
     def install(self, assume_yes: bool = False) -> InstallResult:
+        # Idempotency: if the rc file already exports the expected value, the
+        # user just hasn't sourced it yet — appending again would stack a
+        # duplicate line on every re-run.
+        if self._rc_reader(self.var_name) == self.expected_value:
+            return InstallResult(
+                InstallStatus.INSTALLED,
+                f"already in {self.rc_path}; run `source {self.rc_path}` to apply",
+            )
         prompt = (
             f"Append `export {self.var_name}={self.expected_value}` to {self.rc_path}?"
         )

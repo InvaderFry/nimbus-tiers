@@ -23,6 +23,7 @@ from nimbus_tiers.environment.setup_step import (
     InstallResult,
     InstallStatus,
     SetupStep,
+    append_rc_export,
     default_rc_path,
 )
 from nimbus_tiers.environment.steps import (
@@ -68,7 +69,7 @@ def test_python_step_install_is_manual() -> None:
 
 def test_nvidia_driver_present_when_recent_version_parsed() -> None:
     runner = MagicMock(return_value=_proc(stdout="Driver Version: 575.20  CUDA Version: 12.8\n"))
-    step = NvidiaDriverStep(runner=runner)
+    step = NvidiaDriverStep(platform="linux", runner=runner)
     # Patch _which to pretend nvidia-smi is on PATH
     step._which = lambda _cmd: "/usr/bin/nvidia-smi"  # type: ignore[method-assign]
     result = step.check()
@@ -78,17 +79,36 @@ def test_nvidia_driver_present_when_recent_version_parsed() -> None:
 
 def test_nvidia_driver_partial_when_old_version() -> None:
     runner = MagicMock(return_value=_proc(stdout="Driver Version: 535.10\n"))
-    step = NvidiaDriverStep(runner=runner)
+    step = NvidiaDriverStep(platform="linux", runner=runner)
     step._which = lambda _cmd: "/usr/bin/nvidia-smi"  # type: ignore[method-assign]
     result = step.check()
     assert result.status is CheckStatus.PARTIAL
 
 
 def test_nvidia_driver_missing_when_no_smi() -> None:
-    step = NvidiaDriverStep()
+    step = NvidiaDriverStep(platform="linux")
     step._which = lambda _cmd: None  # type: ignore[method-assign]
     result = step.check()
     assert result.status is CheckStatus.MISSING
+
+
+def test_nvidia_driver_not_applicable_on_macos() -> None:
+    """macOS has no NVIDIA driver — the check must not block light-local.
+
+    Ollama uses the Metal backend on Apple Silicon, so `nimbus-setup
+    --path-type light-local` on a Mac must be able to reach "Environment
+    ready". Full-hybrid still fails correctly at the TabbyAPI step.
+    """
+    step = NvidiaDriverStep(platform="darwin")
+    # _which must not even be consulted on darwin.
+    step._which = lambda _cmd: pytest.fail("nvidia-smi lookup must be skipped on darwin")  # type: ignore[method-assign]
+    result = step.check()
+    assert result.status is CheckStatus.PRESENT
+    assert "Metal" in result.detail
+    assert "Linux or WSL" in result.detail
+    install = step.install()
+    assert install.status is InstallStatus.MANUAL
+    assert "Metal" in install.detail
 
 
 # ----- OllamaStep -----------------------------------------------------------
@@ -644,6 +664,69 @@ def test_env_var_step_install_appends_to_rc(tmp_path: Path) -> None:
     result = step.install()
     assert result.status is InstallStatus.INSTALLED
     assert captured == [(str(rc), 'export FOO="1"\n')]
+
+
+def test_env_var_step_install_skips_append_when_already_in_rc(tmp_path: Path) -> None:
+    """Re-running install must not stack duplicate export lines.
+
+    The var being in the rc but not the environment just means the user has
+    not sourced the rc yet — the fix is `source`, not another append.
+    """
+    rc = tmp_path / ".bashrc"
+    rc.write_text('# existing\nexport FOO="1"\n')
+
+    def exploding_writer(_path: str, _line: str) -> None:
+        raise AssertionError("must not append when the rc already has the value")
+
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=exploding_writer,
+        confirm=lambda _p: pytest.fail("must not prompt when the rc already has the value"),
+        logger=lambda _m: None,
+    )
+    result = step.install()
+    assert result.status is InstallStatus.INSTALLED
+    assert "already in" in result.detail
+    assert rc.read_text() == '# existing\nexport FOO="1"\n'
+
+
+def test_env_var_step_install_appends_when_rc_value_differs(tmp_path: Path) -> None:
+    """A wrong value in the rc still gets a fresh append (last export wins)."""
+    rc = tmp_path / ".bashrc"
+    rc.write_text('export FOO="0"\n')
+    captured: list[tuple[str, str]] = []
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=lambda path, line: captured.append((path, line)),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    assert step.install().status is InstallStatus.INSTALLED
+    assert captured == [(str(rc), 'export FOO="1"\n')]
+
+
+def test_env_var_step_double_install_writes_one_export_line(tmp_path: Path) -> None:
+    """End-to-end idempotency with the real rc writer: two installs, one line."""
+    rc = tmp_path / ".bashrc"
+    rc.write_text("# shell rc\n")
+    step = EnvVarStep(
+        "FOO",
+        "1",
+        rc_path=str(rc),
+        env_lookup=lambda _k: None,
+        rc_writer=lambda path, line: append_rc_export("FOO", "1", path),
+        confirm=lambda _p: True,
+        logger=lambda _m: None,
+    )
+    assert step.install().status is InstallStatus.INSTALLED
+    assert step.install().status is InstallStatus.INSTALLED
+    assert rc.read_text().count("export FOO=") == 1
 
 
 # ----- EnvironmentSetup orchestrator ----------------------------------------

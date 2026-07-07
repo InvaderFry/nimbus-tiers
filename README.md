@@ -42,7 +42,7 @@ This creates `../my-app` (one directory above this repo), copies all template fi
 python3 generateNewProject.py my-app
 ```
 
-Replace `my-app` with your actual project name (letters, numbers, dashes, underscores).
+Replace `my-app` with your actual project name (letters, numbers, dashes, underscores). Running `python3 generateNewProject.py` with **no arguments** starts a short wizard that prompts for the name, setup path, and stack (Enter picks the defaults); passing the name on the command line stays fully non-interactive.
 
 Use `--stack` to tell the generator which tech stack you're targeting. This sets the `test-cmd` in `.aider.conf.yml` so Aider runs the right test command automatically:
 
@@ -52,6 +52,8 @@ Use `--stack` to tell the generator which tech stack you're targeting. This sets
 | `java-gradle` | `./gradlew test` |
 | `node` | `npm test` |
 | `python` | `pytest -x --no-header` |
+| `go` | `go test ./...` |
+| `rust` | `cargo test --quiet` |
 
 ```bash
 # Java Spring Boot (Maven) — default, no flag needed
@@ -184,6 +186,14 @@ python3 generateNewProject.py my-app --path-type cloud-only --stack python
 python3 setupEnvironment.py --path-type cloud-only
 ```
 
+### Platform support
+
+| Platform | Paths |
+|---|---|
+| Linux / WSL | All three paths |
+| macOS | `light-local` (Ollama uses Apple Metal — no NVIDIA driver needed) and `cloud-only`. `full-hybrid` requires CUDA/ExLlamaV3, i.e. Linux or WSL. |
+| Windows (native) | Not supported — use WSL. The setup tool understands the common WSL split (Ollama on the Windows host, everything else in WSL). |
+
 ## Updating an existing project
 
 `phase2.sh` and the other tool-owned scaffold files keep receiving fixes in this repo, but a generated project holds a frozen copy from generation day. `updateProject.py` / `nimbus-update` re-syncs the **managed** subset — `phase2.sh`, `phase2-lib.sh`, `PHASE1_SPEC.md`, `NIMBUS_GUIDE.md`, `PHASE1_VERIFY_HELPER.md`, `.aiderignore`, and the docs — without touching user-owned files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.gitignore`, your source code):
@@ -195,6 +205,17 @@ python3 ../nimbus-tiers/updateProject.py --apply     # overwrite managed files t
 ```
 
 `--apply` refuses to run on a dirty git tree so the update always lands as a single reviewable commit. Which path/stack the project uses is read from the `.nimbus-tiers.json` manifest the generator writes; projects generated before the manifest existed pass `--path-type` and `--stack` explicitly. `--force-all` extends the update to user-owned files (destroys local edits — commit first).
+
+## Routing stats
+
+Every recorded `phase2.sh` step appends a row to `logs/ai-routing.csv` in the generated project. `analyzeRouting.py` / `nimbus-stats` summarizes it — tier share, escalation rate (how often a step needed the fallback tier after a local failure), per-model counts, and diff sizes — so tier decisions can be made from data:
+
+```bash
+cd ../my-app
+python3 ../nimbus-tiers/analyzeRouting.py     # or: nimbus-stats
+```
+
+Note the log records `done`/`halted` rows only (a failure row would dirty the tree and block the next run), so the escalation rate is the honest proxy for local-tier struggle, not a failure rate.
 
 ## Idempotency
 

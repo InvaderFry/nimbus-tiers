@@ -12,13 +12,17 @@ from pathlib import Path
 
 from nimbus_tiers.generator.setup_path import SetupPath, TemplateSpec
 
-_SUPPORTED_STACKS = frozenset({"java-maven", "java-gradle", "python", "node"})
+_SUPPORTED_STACKS = frozenset(
+    {"java-maven", "java-gradle", "python", "node", "go", "rust"}
+)
 
 _EXECUTABLE_SCRIPTS: dict[str, list[str]] = {
     "java-maven": ["mvnw", "phase2.sh"],
     "java-gradle": ["gradlew", "phase2.sh"],
     "python": ["phase2.sh"],
     "node": ["phase2.sh"],
+    "go": ["phase2.sh"],
+    "rust": ["phase2.sh"],
 }
 
 
@@ -136,6 +140,19 @@ class StackScaffoldPath(SetupPath):
                 TemplateSpec(Path("stacks/node/package.json"), Path("package.json")),
                 TemplateSpec(Path("stacks/node/index.js"), Path("index.js")),
                 TemplateSpec(Path("stacks/node/index.test.js"), Path("index.test.js")),
+            ]
+
+        if stack == "go":
+            return [
+                TemplateSpec(Path("stacks/go/go.mod"), Path("go.mod")),
+                TemplateSpec(Path("stacks/go/main.go"), Path("main.go")),
+                TemplateSpec(Path("stacks/go/main_test.go"), Path("main_test.go")),
+            ]
+
+        if stack == "rust":
+            return [
+                TemplateSpec(Path("stacks/rust/Cargo.toml"), Path("Cargo.toml")),
+                TemplateSpec(Path("stacks/rust/main.rs"), Path("src/main.rs")),
             ]
 
         raise ValueError(
