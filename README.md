@@ -196,6 +196,17 @@ python3 ../nimbus-tiers/updateProject.py --apply     # overwrite managed files t
 
 `--apply` refuses to run on a dirty git tree so the update always lands as a single reviewable commit. Which path/stack the project uses is read from the `.nimbus-tiers.json` manifest the generator writes; projects generated before the manifest existed pass `--path-type` and `--stack` explicitly. `--force-all` extends the update to user-owned files (destroys local edits — commit first).
 
+## Routing stats
+
+Every recorded `phase2.sh` step appends a row to `logs/ai-routing.csv` in the generated project. `analyzeRouting.py` / `nimbus-stats` summarizes it — tier share, escalation rate (how often a step needed the fallback tier after a local failure), per-model counts, and diff sizes — so tier decisions can be made from data:
+
+```bash
+cd ../my-app
+python3 ../nimbus-tiers/analyzeRouting.py     # or: nimbus-stats
+```
+
+Note the log records `done`/`halted` rows only (a failure row would dirty the tree and block the next run), so the escalation rate is the honest proxy for local-tier struggle, not a failure rate.
+
 ## Idempotency
 
 All three CLIs check before overwriting anything:
