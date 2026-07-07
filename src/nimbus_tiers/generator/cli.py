@@ -37,6 +37,9 @@ STACK_TEST_COMMANDS: Mapping[str, str] = {
     "rust": "cargo test --quiet",
 }
 
+DEFAULT_PATH_TYPE = "full-hybrid"
+DEFAULT_STACK = "java-maven"
+
 
 def _default_project_path(project_name: str) -> Path:
     """Default destination for the new project.
@@ -94,6 +97,25 @@ def _prompt_project_name() -> str:
     return _validate_project_name(name)
 
 
+def _prompt_choice(label: str, choices: list[str], default: str) -> str:
+    """Numbered-list prompt for the wizard flow. Enter (or EOF) = default."""
+    print(f"{label}:")
+    for index, choice in enumerate(choices, 1):
+        marker = "  (default)" if choice == default else ""
+        print(f"  {index}. {choice}{marker}")
+    try:
+        raw = input(f"Choice [1-{len(choices)}, Enter = {default}]: ").strip()
+    except EOFError:
+        return default
+    if not raw:
+        return default
+    if raw.isdigit() and 1 <= int(raw) <= len(choices):
+        return choices[int(raw) - 1]
+    if raw in choices:
+        return raw
+    raise SystemExit(f"Invalid choice {raw!r} for {label.lower()}.")
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="generateNewProject",
@@ -114,26 +136,31 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Destination directory. Defaults to ../<project_name> next to this repo.",
     )
+    # default=None (not the actual default) so the wizard flow can tell
+    # "flag given" apart from "unspecified" and only prompt for the latter.
     parser.add_argument(
         "--path-type",
         choices=sorted(PATH_REGISTRY.keys()),
-        default="full-hybrid",
+        default=None,
         help=(
             "Setup path. All paths share the same project skeleton; they differ "
             "in the Aider executor config: full-hybrid targets TabbyAPI on "
             "localhost:5000, light-local targets Ollama on localhost:11434, "
-            "cloud-only targets Groq (requires GROQ_API_KEY)."
+            "cloud-only targets Groq (requires GROQ_API_KEY). "
+            f"Defaults to '{DEFAULT_PATH_TYPE}'; prompted for interactively "
+            "when project_name is omitted."
         ),
     )
     parser.add_argument(
         "--stack",
         choices=sorted(STACK_TEST_COMMANDS.keys()),
-        default="java-maven",
+        default=None,
         help=(
             "Project technology stack. Sets the Aider auto-test command in "
             ".aider.conf.yml. Choices: "
             + ", ".join(f"{k} ({v!r})" for k, v in sorted(STACK_TEST_COMMANDS.items()))
-            + ". Defaults to 'java-maven'."
+            + f". Defaults to '{DEFAULT_STACK}'; prompted for interactively "
+            "when project_name is omitted."
         ),
     )
     mode_group = parser.add_mutually_exclusive_group()
@@ -153,11 +180,27 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
+    # Wizard flow: omitting project_name is the interactive entry point (it
+    # already prompted for the name before this change), so extend it to any
+    # path/stack not pinned by a flag. Explicit `nimbus-generate my-app`
+    # invocations never prompt — scripts keep working unchanged.
+    interactive = not args.project_name
     project_name = (
         _validate_project_name(args.project_name)
         if args.project_name
         else _prompt_project_name()
     )
+    if interactive:
+        if args.path_type is None:
+            args.path_type = _prompt_choice(
+                "Setup path", sorted(PATH_REGISTRY.keys()), DEFAULT_PATH_TYPE
+            )
+        if args.stack is None:
+            args.stack = _prompt_choice(
+                "Stack", sorted(STACK_TEST_COMMANDS.keys()), DEFAULT_STACK
+            )
+    path_type = args.path_type or DEFAULT_PATH_TYPE
+    stack = args.stack or DEFAULT_STACK
 
     project_path = (
         args.path.resolve() if args.path is not None else _default_project_path(project_name)
@@ -176,10 +219,10 @@ def main(argv: list[str] | None = None) -> int:
 
     package_name = derive_package_name(project_name)
     class_name = derive_class_name(project_name)
-    test_cmd = STACK_TEST_COMMANDS[args.stack]
+    test_cmd = STACK_TEST_COMMANDS[stack]
 
-    setup_path = PATH_REGISTRY[args.path_type](
-        stack=args.stack,
+    setup_path = PATH_REGISTRY[path_type](
+        stack=stack,
         package_name=package_name,
         class_name=class_name,
     )
@@ -194,9 +237,9 @@ def main(argv: list[str] | None = None) -> int:
         templates_root=templates_dir,
     )
 
-    print(f"Generating {args.path_type} project '{project_name}' at {project_path}")
+    print(f"Generating {path_type} project '{project_name}' at {project_path}")
     print(f"Templates root: {templates_dir}")
-    print(f"Stack: {args.stack} (test-cmd: {test_cmd!r})")
+    print(f"Stack: {stack} (test-cmd: {test_cmd!r})")
     print()
 
     report = generator.generate(

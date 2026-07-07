@@ -42,7 +42,7 @@ This creates `../my-app` (one directory above this repo), copies all template fi
 python3 generateNewProject.py my-app
 ```
 
-Replace `my-app` with your actual project name (letters, numbers, dashes, underscores).
+Replace `my-app` with your actual project name (letters, numbers, dashes, underscores). Running `python3 generateNewProject.py` with **no arguments** starts a short wizard that prompts for the name, setup path, and stack (Enter picks the defaults); passing the name on the command line stays fully non-interactive.
 
 Use `--stack` to tell the generator which tech stack you're targeting. This sets the `test-cmd` in `.aider.conf.yml` so Aider runs the right test command automatically:
 
