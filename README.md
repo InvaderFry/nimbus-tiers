@@ -186,6 +186,14 @@ python3 generateNewProject.py my-app --path-type cloud-only --stack python
 python3 setupEnvironment.py --path-type cloud-only
 ```
 
+### Platform support
+
+| Platform | Paths |
+|---|---|
+| Linux / WSL | All three paths |
+| macOS | `light-local` (Ollama uses Apple Metal — no NVIDIA driver needed) and `cloud-only`. `full-hybrid` requires CUDA/ExLlamaV3, i.e. Linux or WSL. |
+| Windows (native) | Not supported — use WSL. The setup tool understands the common WSL split (Ollama on the Windows host, everything else in WSL). |
+
 ## Updating an existing project
 
 `phase2.sh` and the other tool-owned scaffold files keep receiving fixes in this repo, but a generated project holds a frozen copy from generation day. `updateProject.py` / `nimbus-update` re-syncs the **managed** subset — `phase2.sh`, `phase2-lib.sh`, `PHASE1_SPEC.md`, `NIMBUS_GUIDE.md`, `PHASE1_VERIFY_HELPER.md`, `.aiderignore`, and the docs — without touching user-owned files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.gitignore`, your source code):

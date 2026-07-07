@@ -69,7 +69,7 @@ def test_python_step_install_is_manual() -> None:
 
 def test_nvidia_driver_present_when_recent_version_parsed() -> None:
     runner = MagicMock(return_value=_proc(stdout="Driver Version: 575.20  CUDA Version: 12.8\n"))
-    step = NvidiaDriverStep(runner=runner)
+    step = NvidiaDriverStep(platform="linux", runner=runner)
     # Patch _which to pretend nvidia-smi is on PATH
     step._which = lambda _cmd: "/usr/bin/nvidia-smi"  # type: ignore[method-assign]
     result = step.check()
@@ -79,17 +79,36 @@ def test_nvidia_driver_present_when_recent_version_parsed() -> None:
 
 def test_nvidia_driver_partial_when_old_version() -> None:
     runner = MagicMock(return_value=_proc(stdout="Driver Version: 535.10\n"))
-    step = NvidiaDriverStep(runner=runner)
+    step = NvidiaDriverStep(platform="linux", runner=runner)
     step._which = lambda _cmd: "/usr/bin/nvidia-smi"  # type: ignore[method-assign]
     result = step.check()
     assert result.status is CheckStatus.PARTIAL
 
 
 def test_nvidia_driver_missing_when_no_smi() -> None:
-    step = NvidiaDriverStep()
+    step = NvidiaDriverStep(platform="linux")
     step._which = lambda _cmd: None  # type: ignore[method-assign]
     result = step.check()
     assert result.status is CheckStatus.MISSING
+
+
+def test_nvidia_driver_not_applicable_on_macos() -> None:
+    """macOS has no NVIDIA driver — the check must not block light-local.
+
+    Ollama uses the Metal backend on Apple Silicon, so `nimbus-setup
+    --path-type light-local` on a Mac must be able to reach "Environment
+    ready". Full-hybrid still fails correctly at the TabbyAPI step.
+    """
+    step = NvidiaDriverStep(platform="darwin")
+    # _which must not even be consulted on darwin.
+    step._which = lambda _cmd: pytest.fail("nvidia-smi lookup must be skipped on darwin")  # type: ignore[method-assign]
+    result = step.check()
+    assert result.status is CheckStatus.PRESENT
+    assert "Metal" in result.detail
+    assert "Linux or WSL" in result.detail
+    install = step.install()
+    assert install.status is InstallStatus.MANUAL
+    assert "Metal" in install.detail
 
 
 # ----- OllamaStep -----------------------------------------------------------
