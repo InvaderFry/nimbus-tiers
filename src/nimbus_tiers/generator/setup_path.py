@@ -20,10 +20,16 @@ class TemplateSpec:
     Both paths are relative — `src_relative` to the templates root, `dest_relative`
     to the new-project root. Absolute paths are forbidden so paths stay portable
     across machines and so the orchestrator can swap roots freely.
+
+    `managed` marks tool-owned files (phase2.sh, PHASE1_SPEC.md, …) that
+    `nimbus-update` may overwrite in an existing project. User-owned files
+    (CONTEXT.md, stack starters, tuned configs) stay False and are never
+    touched by an update.
     """
 
     src_relative: Path
     dest_relative: Path
+    managed: bool = False
 
     def __post_init__(self) -> None:
         if self.src_relative.is_absolute():

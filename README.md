@@ -142,9 +142,11 @@ claude          # Phase 1: write PLAN.md, TESTS.md, plans/step01.md…, refine C
 claude /review  # Phase 3
 ```
 
+`phase2.sh --status` prints a read-only pipeline report (next step, lock/sentinel state, dirty tree, gate lint) and `phase2.sh --dry-run` exercises every pre-Aider check without invoking the model or touching the tree.
+
 ### Optional: install as a Python package
 
-If you want global `nimbus-generate` / `nimbus-setup` console-script aliases, install the package. **On modern Debian/Ubuntu/WSL (PEP 668)**, the system Python refuses `pip install` outside a venv — pick one of these:
+If you want global `nimbus-generate` / `nimbus-setup` / `nimbus-update` console-script aliases, install the package. **On modern Debian/Ubuntu/WSL (PEP 668)**, the system Python refuses `pip install` outside a venv — pick one of these:
 
 ```bash
 # Option A — venv (recommended for development)
@@ -182,12 +184,25 @@ python3 generateNewProject.py my-app --path-type cloud-only --stack python
 python3 setupEnvironment.py --path-type cloud-only
 ```
 
+## Updating an existing project
+
+`phase2.sh` and the other tool-owned scaffold files keep receiving fixes in this repo, but a generated project holds a frozen copy from generation day. `updateProject.py` / `nimbus-update` re-syncs the **managed** subset — `phase2.sh`, `phase2-lib.sh`, `PHASE1_SPEC.md`, `NIMBUS_GUIDE.md`, `PHASE1_VERIFY_HELPER.md`, `.aiderignore`, and the docs — without touching user-owned files (`CONTEXT.md`, `VERIFY.md`, `CLAUDE.md`, `.aider.conf.yml`, `.gitignore`, your source code):
+
+```bash
+cd ../my-app
+python3 ../nimbus-tiers/updateProject.py             # preview (unified diff, writes nothing)
+python3 ../nimbus-tiers/updateProject.py --apply     # overwrite managed files that changed
+```
+
+`--apply` refuses to run on a dirty git tree so the update always lands as a single reviewable commit. Which path/stack the project uses is read from the `.nimbus-tiers.json` manifest the generator writes; projects generated before the manifest existed pass `--path-type` and `--stack` explicitly. `--force-all` extends the update to user-owned files (destroys local edits — commit first).
+
 ## Idempotency
 
-Both CLIs check before overwriting anything:
+All three CLIs check before overwriting anything:
 
 - `generateNewProject.py` — defaults to **skip + warn** for existing files. Use `--force` to overwrite, `--diff` to preview without writing.
 - `setupEnvironment.py` — never writes to your machine without an interactive prompt. Use `--check-only` to see what's missing without prompting.
+- `updateProject.py` — defaults to **diff preview**; `--apply` only overwrites managed files whose content actually differs.
 
 ## Development
 

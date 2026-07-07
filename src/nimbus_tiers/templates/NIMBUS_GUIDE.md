@@ -135,6 +135,22 @@ Run the wrapper script from your project root. Re-run it until all steps show DO
 ./phase2.sh
 ```
 
+Two read-only modes make the pipeline state legible without starting a run:
+
+```bash
+./phase2.sh --status    # next step, lock/WIP-sentinel/fail-marker state,
+                        # dirty tree, verify.sh gate lint. Exit 0 = a run
+                        # could proceed, 1 = something would block it.
+./phase2.sh --dry-run   # every pre-Aider check (branch, dirty tree, gate
+                        # lint, endpoint preflight, planned-path parse,
+                        # edit-format decision) without invoking Aider or
+                        # touching the tree, .git/ bookkeeping, or step logs.
+```
+
+Use `--status` when a run refused to start and you want to see which guard is
+blocking; use `--dry-run` before an overnight batch to confirm the endpoint,
+step file, and targets are all sane.
+
 What it does each run:
 
 1. Reads `CompletedSteps.md` to find the next step number `N`.

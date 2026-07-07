@@ -7,6 +7,7 @@ and path-agnostic — adding a new SetupPath subclass requires no changes here.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,31 @@ from nimbus_tiers.generator.git_initializer import (
     GitInitResult,
 )
 from nimbus_tiers.generator.setup_path import SetupPath
+
+MANIFEST_NAME = ".nimbus-tiers.json"
+MANIFEST_FORMAT = 1
+
+
+def render_manifest(
+    project_name: str,
+    setup_path: SetupPath,
+    substitutions: Mapping[str, str],
+) -> bytes:
+    """Serialize the generation manifest that `nimbus-update` reads later.
+
+    Deliberately deterministic (no timestamp): byte-identical content is how
+    FileWriter recognizes an unchanged file, so re-running the generator over
+    an existing project reports `unchanged` instead of a spurious diff.
+    """
+    manifest = {
+        "format": MANIFEST_FORMAT,
+        "path_type": setup_path.name,
+        "stack": getattr(setup_path, "stack", None),
+        "project_name": project_name,
+        "package_name": substitutions.get("PACKAGE_NAME"),
+        "class_name": substitutions.get("CLASS_NAME"),
+    }
+    return (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 @dataclass
@@ -93,9 +119,24 @@ class ProjectGenerator:
             dest = project_path / spec.dest_relative
             report.file_results.append(self.file_writer.write(src, dest, merged_subs))
 
+        # Record how the project was generated so `nimbus-update` can later
+        # re-derive the same path/stack/substitutions without asking.
+        report.file_results.append(
+            self.file_writer.write_content(
+                render_manifest(project_name, self.setup_path, merged_subs),
+                project_path / MANIFEST_NAME,
+            )
+        )
+
         self.setup_path.post_copy_hooks(project_path)
         report.git_result = self.git_initializer.initialize(project_path)
         return report
 
 
-__all__ = ["ProjectGenerator", "GenerationReport"]
+__all__ = [
+    "ProjectGenerator",
+    "GenerationReport",
+    "MANIFEST_NAME",
+    "MANIFEST_FORMAT",
+    "render_manifest",
+]
