@@ -32,9 +32,12 @@ jobs:
       # upstream wrappers and are deliberately not linted.
       # -P SCRIPTDIR resolves the sourced phase2-lib.sh relative to the
       # script's own directory, which holds in this repo and in scaffolded
-      # projects alike.
+      # projects alike. -S warning gates on warnings+errors only: runner
+      # shellcheck versions differ from dev machines on info/style notes
+      # (e.g. SC2015 on the intentional `[ -n .. ] && kill .. || true`
+      # signal-handler lines), and those must not flap the build.
       - name: shellcheck phase2 scripts
-        run: shellcheck -x -P SCRIPTDIR src/nimbus_tiers/templates/phase2*.sh
+        run: shellcheck -x -P SCRIPTDIR -S warning src/nimbus_tiers/templates/phase2*.sh
 
   package:
     name: wheel builds and installs cleanly
